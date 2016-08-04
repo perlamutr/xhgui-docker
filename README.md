@@ -7,7 +7,7 @@ Just provide your data provider to container's mongo instance.
 - [Usage](#usage)
     - [Executing as part of compose of containers](#executing-as-part-in-compose-of-containers)
     - [Executing as standalone container](#executing-as-standalone-container)
-- [Roadmap for 1.0 version](#roadmap-for-1.0-version)
+- [Roadmap for 1.0 version](#roadmap-for-10-version)
 
 ## Usage
 
