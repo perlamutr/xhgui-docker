@@ -1,5 +1,7 @@
 FROM php:5-fpm
 
+MAINTAINER Vitaly Bolychev <vitaly.bolychev@gmail.com>
+
 # install mongodb according official docs
 # https://docs.mongodb.com/manual/tutorial/install-mongodb-on-debian/
 RUN apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv EA312927
@@ -24,7 +26,7 @@ RUN apt-get install -y nginx
 COPY ./nginx/default.conf /etc/nginx/sites-enabled/default
 COPY ./php-fpm/timezone.ini /usr/local/etc/php/conf.d
 
-COPY ./xhgui /var/www/xhgui
+ADD ./xhgui/ /var/www/xhgui/
 
 WORKDIR /var/www/xhgui
 
