@@ -24,9 +24,7 @@ RUN apt-get install -y nginx
 COPY ./nginx/default.conf /etc/nginx/sites-enabled/default
 COPY ./php-fpm/timezone.ini /usr/local/etc/php/conf.d
 
-# clone xhgui
-RUN apt-get install -y git-core
-RUN git clone https://github.com/perftools/xhgui.git /var/www/xhgui
+COPY ./xhgui /var/www/xhgui
 
 WORKDIR /var/www/xhgui
 
