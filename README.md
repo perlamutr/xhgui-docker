@@ -13,7 +13,7 @@ Just provide your data provider to container's mongo instance.
 
 ### Executing with docker-compose
 
-1. Configure your docker-compose.yml
+1. Configure your [docker-compose.yml](https://docs.docker.com/compose/compose-file/)
 
     ```
     version: "2"
@@ -31,12 +31,12 @@ Just provide your data provider to container's mongo instance.
 
 2. Build
     ```
-docker-compose build .
+$ docker-compose build .
 ```
 
 3. Run
     ```
-docker-compose up -d
+$ docker-compose up -d
 ```
 
 4. Open xhgui (as described on docker-compose.yml on port 8081 http://127.0.0.1:8081) and see results
