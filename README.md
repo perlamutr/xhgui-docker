@@ -39,7 +39,9 @@ $ docker-compose build .
 $ docker-compose up -d
 ```
 
-4. Open xhgui (as described on docker-compose.yml on port 8081 http://127.0.0.1:8081) and see results
+4. Open xhgui (as described in docker-compose.yml on port 8081 http://127.0.0.1:8081) and see results
+
+TODO: Describe the docker-compose example for nginx-php-xhgui set of containers
 
 ### Executing as standalone container
 
