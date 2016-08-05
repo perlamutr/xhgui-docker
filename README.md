@@ -47,7 +47,7 @@ TODO: Describe the docker-compose example for nginx-php-xhgui set of containers
 
 1. Execute docker image
     ```
-$ docker run -d -p 8081:80 cv21:xhgui
+$ docker run -d -p 8081:80 cv21/xhgui
 ```
 
 2. Open link http://127.0.0.1:8081
