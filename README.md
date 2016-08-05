@@ -30,12 +30,12 @@ Just provide your data provider to container's mongo instance.
     ```
 
 2. Build
-```
+    ```
 docker-compose build .
 ```
 
 3. Run
-```
+    ```
 docker-compose up -d
 ```
 
@@ -44,7 +44,7 @@ docker-compose up -d
 ### Executing as standalone container
 
 1. Execute docker image
-```
+    ```
 $ docker run -d -p 8081:80 cv21:xhgui
 ```
 
