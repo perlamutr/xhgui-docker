@@ -30,6 +30,8 @@ RUN git clone https://github.com/perftools/xhgui.git /var/www/xhgui
 
 WORKDIR /var/www/xhgui
 
+RUN mkdir -p /data/db && chmod -R 777 /data/db
+
 RUN php install.php
 RUN chown -R www-data:www-data /var/www/xhgui
 
