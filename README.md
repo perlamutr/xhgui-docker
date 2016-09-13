@@ -1,6 +1,6 @@
 # xhgui-docker
 
-[![Release version](https://img.shields.io/github/release/cv21/xhgui-docker.svg)](https://github.com/cv21/xhgui/) [![Docker pulls](https://img.shields.io/docker/pulls/cv21/xhgui.svg)](https://hub.docker.com/r/cv21/xhgui/) [![Docker stars](https://img.shields.io/docker/stars/cv21/xhgui.svg)](https://hub.docker.com/r/cv21/xhgui/)
+[![Release version](https://img.shields.io/github/release/cv21/xhgui-docker.svg)](https://github.com/cv21/xhgui/) [![Docker pulls](https://img.shields.io/docker/pulls/cv21/xhgui.svg)](https://hub.docker.com/r/cv21/xhgui/) [![Layers](https://images.microbadger.com/badges/image/cv21/xhgui.svg)](https://hub.docker.com/r/cv21/xhgui/)
 
 Docker image allow to you use xhgui as service inside its own container. 
 Just provide your data provider to container's mongo instance.
