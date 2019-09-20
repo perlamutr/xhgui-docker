@@ -1,7 +1,7 @@
 <?php
 
 $credentials = getUriOrEnvValue('MONGO_CRED', false);
-$hostPort = getUriOrEnvValue('MONGO_HOST_PORT', 'mongodb://mongo:27017');
+$hostPort = getUriOrEnvValue('MONGO_HOST_PORT', 'mongo:27017');
 $collection = getUriOrEnvValue('MONGO_COLLECTION', 'results');
 $options = getUriOrEnvValue('MONGO_OPTIONS', false);
 
@@ -30,5 +30,5 @@ function getUriOrEnvValue($name, $default = null)
 {
     $value = isset($_GET[$name]) ? $_GET[$name] : getenv($name);
 
-    return $value !== false ? $value : $default;
+    return $value ?: $default;
 }
