@@ -1,28 +1,12 @@
 FROM php:5-fpm
 
-MAINTAINER Vitaly Bolychev <vitaly.bolychev@gmail.com>
+RUN apt-get update && apt-get install -y libmcrypt-dev libssl-dev libzip-dev nginx procps vim
 
-# install mongodb according official docs
-# https://docs.mongodb.com/manual/tutorial/install-mongodb-on-debian/
-RUN apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv EA312927
-RUN echo "deb http://repo.mongodb.org/apt/debian jessie/mongodb-org/3.2 main" | tee /etc/apt/sources.list.d/mongodb-org-3.2.list
-RUN apt-get update
-RUN apt-get install -y mongodb-org
-
-# install and configure mcrypt
-RUN apt-get update && apt-get install -y libmcrypt-dev && docker-php-ext-install -j$(nproc) mcrypt
-
-# install libssl for pecl
-RUN apt-get install -y libssl-dev
-
-# install mongodb driver and zip extension via pecl
-RUN pecl install mongodb && docker-php-ext-enable mongodb
+#RUN pecl install mcrypt-1.0.2 && docker-php-ext-enable mcrypt
+RUN docker-php-ext-install -j$(nproc) mcrypt
+RUN pecl install mongo && docker-php-ext-enable mongo
 RUN pecl install zip && docker-php-ext-enable zip
 
-# install nginx
-RUN apt-get install -y nginx
-
-# set up config files
 COPY ./nginx/default.conf /etc/nginx/sites-enabled/default
 COPY ./php-fpm/timezone.ini /usr/local/etc/php/conf.d
 
@@ -30,12 +14,16 @@ ADD ./xhgui/ /var/www/xhgui/
 
 WORKDIR /var/www/xhgui
 
-RUN mkdir -p /data/db && chmod -R 777 /data/db
+COPY ./config.php /var/www/xhgui/config
+COPY ./composer.phar /var/www/xhgui
+COPY ./collection_xhgui.patch /var/www/xhgui
 
-RUN php install.php
+RUN php composer.phar install --no-dev
 RUN chown -R www-data:www-data /var/www/xhgui
+RUN chmod 777 /var/www/xhgui/cache
 
-CMD service nginx start && php-fpm -D && mongod
+RUN patch -p1 < collection_xhgui.patch
 
-# expose nginx and mongodb ports
-EXPOSE 80 27017
+CMD service nginx start && php-fpm -F
+
+EXPOSE 80

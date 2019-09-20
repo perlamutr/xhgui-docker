@@ -1,0 +1,54 @@
+diff --git a/src/Xhgui/Profiles.php b/src/Xhgui/Profiles.php
+index 23a2213..55d1765 100644
+--- a/src/Xhgui/Profiles.php
++++ b/src/Xhgui/Profiles.php
+@@ -8,9 +8,9 @@ class Xhgui_Profiles
+ 
+     protected $_mapper;
+ 
+-    public function __construct(MongoDb $db)
++    public function __construct(MongoDb $db, $collection)
+     {
+-        $this->_collection = $db->results;
++        $this->_collection = $db->$collection;
+         $this->_mapper = new Xhgui_Db_Mapper();
+     }
+ 
+diff --git a/src/Xhgui/Saver.php b/src/Xhgui/Saver.php
+index 86b6a98..429fc46 100644
+--- a/src/Xhgui/Saver.php
++++ b/src/Xhgui/Saver.php
+@@ -21,7 +21,8 @@ class Xhgui_Saver
+             case 'mongodb':
+             default:
+                 $mongo = new MongoClient($config['db.host'], $config['db.options']);
+-                $mongo->{$config['db.db']}->results->findOne();
++                $coll = $config['db.collection'];
++                $mongo->{$config['db.db']}->$coll->findOne();
+                 $profiles = new Xhgui_Profiles($mongo->{$config['db.db']});
+                 return new Xhgui_Saver_Mongo($profiles);
+         }
+diff --git a/src/Xhgui/ServiceContainer.php b/src/Xhgui/ServiceContainer.php
+index 072606f..1171467 100644
+--- a/src/Xhgui/ServiceContainer.php
++++ b/src/Xhgui/ServiceContainer.php
+@@ -74,8 +74,9 @@ class Xhgui_ServiceContainer extends Pimple
+             if (empty($config['db.options'])) {
+                 $config['db.options'] = array();
+             }
++            $coll = $config['db.collection'];
+             $mongo = new MongoClient($config['db.host'], $config['db.options']);
+-            $mongo->{$config['db.db']}->results->findOne();
++            $mongo->{$config['db.db']}->$coll->findOne();
+ 
+             return $mongo->{$config['db.db']};
+         });
+@@ -85,7 +86,7 @@ class Xhgui_ServiceContainer extends Pimple
+         };
+ 
+         $this['profiles'] = function ($c) {
+-            return new Xhgui_Profiles($c['db']);
++            return new Xhgui_Profiles($c['db'], $c['config']['db.collection']);
+         };
+ 
+         $this['saver'] = function($c) {
