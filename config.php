@@ -1,5 +1,7 @@
 <?php
 
+session_start();
+
 $credentials = getUriOrEnvValue('MONGO_CRED', false);
 $hostPort = getUriOrEnvValue('MONGO_HOST_PORT', 'mongo:27017');
 $collection = getUriOrEnvValue('MONGO_COLLECTION', 'results');
@@ -13,8 +15,6 @@ $mongoUri = sprintf(
 );
 
 return [
-    'debug'             => false,
-    'mode'              => 'development',
     'save.handler'      => 'file',
     'db.host'           => $mongoUri,
     'db.db'             => 'xhprof',
@@ -28,7 +28,18 @@ return [
 
 function getUriOrEnvValue($name, $default = null)
 {
-    $value = isset($_GET[$name]) ? $_GET[$name] : getenv($name);
+    if (isset($_GET[$name])) {
+        $value = $_GET[$name];
+    } elseif (isset($_SESSION[$name])) {
+        $value = $_SESSION[$name];
+    } else {
+        $value = getenv($name);
+        if ($value === false) {
+            $value = $default;
+        }
+    }
 
-    return $value ?: $default;
+    $_SESSION[$name] = $value;
+
+    return $value;
 }

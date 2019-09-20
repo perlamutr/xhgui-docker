@@ -1,54 +1,4875 @@
-diff --git a/src/Xhgui/Profiles.php b/src/Xhgui/Profiles.php
-index 23a2213..55d1765 100644
---- a/src/Xhgui/Profiles.php
+diff --git a/.dockerignore b/.dockerignore
+deleted file mode 100644
+index 097b90c..0000000
+--- a/.dockerignore
++++ /dev/null
+@@ -1,9 +0,0 @@
+-# https://docs.docker.com/engine/reference/builder/#dockerignore-file
+-# exclude all, whitelist only wanted context
+-/*
+-!/composer.*
+-!/config/
+-!/docker/
+-!/src/
+-!/vendor/
+-!/webroot/
+diff --git a/.gitignore b/.gitignore
+index 13f4d16..035843b 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1 +0,0 @@
+-/composer.lock
+@@ -4,3 +3,2 @@
+-/vendor/
+-/config/config.php
+-/docker-compose.override.yml
++/vendor
++config/config.php
+diff --git a/.stickler.yml b/.stickler.yml
+deleted file mode 100644
+index 9201c88..0000000
+--- a/.stickler.yml
++++ /dev/null
+@@ -1,11 +0,0 @@
+-linters:
+-  phpcs:
+-    standard: PSR2
+-    exclude: 'Squiz.Classes.ValidClassName,PSR1.Classes.ClassDeclaration'
+-  csslint:
+-    ignore: 'ids,known-properties'
+-files:
+-  ignore:
+-    - 'bower_components/*'
+-    - 'node_modules/*'
+-    - 'vendor/*'
+diff --git a/.travis.yml b/.travis.yml
+index 4d6e422..7f115cc 100644
+--- a/.travis.yml
++++ b/.travis.yml
+@@ -4,3 +4 @@ php:
+-  - 7.2
+-  - 7.1
+-  - 7.0
++  - 5.5
+@@ -7,0 +6 @@ php:
++  - 7.0
+@@ -11 +10 @@ matrix:
+-    - php: 7.2
++    - php: 5.5
+@@ -17,2 +16,11 @@ services:
+-install:
+-  - .travis/install.sh
++before_script:
++  - pecl install xhprof-beta
++  - pecl install mongodb
++  - echo "extension = mongodb.so" >> ~/.phpenv/versions/$(phpenv version-name)/etc/php.ini
++  - git clone https://github.com/tideways/php-profiler-extension.git
++  - cd php-profiler-extension && phpize && ./configure && make && make install && cd ..
++  - echo "extension=tideways.so" >> ~/.phpenv/versions/$(phpenv version-name)/etc/php.ini
++  - echo "tideways.auto_prepend_library=0" >> ~/.phpenv/versions/$(phpenv version-name)/etc/php.ini
++  - phpenv rehash
++  - composer install --prefer-dist --dev
++  - chmod -R 0777 cache/
+@@ -21 +29,19 @@ script:
+-  - .travis/run.sh
++  - >
++    if [[ "$COVERAGE" == "0" ]]; then
++      echo;
++      echo "Running unit tests";
++      phpunit
++    fi
++  - >
++    if [[ "$COVERAGE" == "1" ]]; then
++      echo;
++      echo "Running unit tests with code-coverage";
++      phpunit --coverage-clover=unittest-coverage.clover
++    fi
++  - >
++    if [[ "$COVERAGE" == "1" ]]; then
++      echo;
++      echo "Uploading code coverage results";
++      wget https://scrutinizer-ci.com/ocular.phar
++      php ocular.phar code-coverage:upload --format=php-clover unittest-coverage.clover
++    fi
+diff --git a/.travis/install.sh b/.travis/install.sh
+deleted file mode 100755
+index ef135ac..0000000
+--- a/.travis/install.sh
++++ /dev/null
+@@ -1,26 +0,0 @@
+-#!/bin/bash -e
+-
+-if [[ "$TRAVIS_PHP_VERSION" == "7.2" ]]; then
+-	# installed, but not enabled?
+-	echo "extension = mongodb.so" >> ~/.phpenv/versions/$(phpenv version-name)/etc/conf.d/travis.ini
+-else
+-	pecl install mongodb || true
+-fi
+-
+-git clone https://github.com/tideways/php-profiler-extension.git
+-cd php-profiler-extension
+-
+-if [[ "$TRAVIS_PHP_VERSION" == "5.6" ]]; then
+-    git checkout 4.x
+-    echo "extension=tideways.so" >> ~/.phpenv/versions/$(phpenv version-name)/etc/php.ini
+-    echo "tideways.auto_prepend_library=0" >> ~/.phpenv/versions/$(phpenv version-name)/etc/php.ini
+-else
+-    git checkout master
+-    echo "extension=tideways_xhprof.so" >> ~/.phpenv/versions/$(phpenv version-name)/etc/php.ini
+-fi
+-
+-phpize && ./configure && make && make install && cd ..
+-phpenv rehash
+-
+-composer install --prefer-dist
+-chmod -R 0777 cache/
+diff --git a/.travis/run.sh b/.travis/run.sh
+deleted file mode 100755
+index ec0cc3a..0000000
+--- a/.travis/run.sh
++++ /dev/null
+@@ -1,14 +0,0 @@
+-#!/bin/bash -e
+-if [[ "$COVERAGE" == "1" ]]; then
+-  echo;
+-  echo "Running unit tests with code-coverage";
+-  composer cover
+-  echo;
+-  echo "Uploading code coverage results";
+-  wget https://scrutinizer-ci.com/ocular.phar
+-  php ocular.phar code-coverage:upload --format=php-clover unittest-coverage.clover
+-else
+-  echo;
+-  echo "Running unit tests";
+-  composer test
+-fi
+diff --git a/Dockerfile b/Dockerfile
+deleted file mode 100644
+index b16c6ef..0000000
+--- a/Dockerfile
++++ /dev/null
+@@ -1,51 +0,0 @@
+-# This dockerfile is optimized to have efficient layers caching.
+-# for example composer install is ran only if composer related files are updated.
+-# also modifying source, would not need to rebuild extensions layer.
+-# Author: Elan Ruusamäe <glen@pld-linux.org>
+-
+-FROM php:7.3-fpm-alpine AS base
+-
+-RUN set -x \
+-    && apk add --no-cache --virtual .build-deps ${PHPIZE_DEPS} \
+-	&& pecl install mongodb && docker-php-ext-enable mongodb \
+-    && apk del .build-deps
+-
+-# prepare sources
+-FROM scratch AS source
+-WORKDIR /app
+-COPY . .
+-# mkdir "vendor" dir, so the next stage can use external vendor optionally
+-WORKDIR /app/vendor
+-
+-# install composer vendor
+-FROM base AS build
+-WORKDIR /app
+-ARG COMPOSER_FLAGS="--no-interaction --no-suggest --ansi --no-dev"
+-COPY --from=composer:1.8 /usr/bin/composer /usr/bin/
+-
+-COPY --from=source /app/composer.* ./
+-COPY --from=source /app/vendor ./vendor
+-
+-# install in two steps to cache composer run based on composer.* files
+-RUN composer require --update-no-dev --no-scripts alcaeus/mongo-php-adapter ^1.1
+-RUN composer install $COMPOSER_FLAGS --no-scripts --no-autoloader
+-
+-# copy rest of the project. copy in order that is least to most changed
+-COPY --from=source /app/webroot ./webroot
+-COPY --from=source /app/src ./src
+-COPY --from=source /app/config ./config
+-
+-# second run to invoke (possible) scripts and create autoloader
+-RUN composer install $COMPOSER_FLAGS --classmap-authoritative
+-# not needed runtime, cleanup
+-RUN rm -vf composer.* vendor/composer/*.json
+-
+-# build runtime image
+-FROM base
+-#ARG APPDIR=/app
+-ARG APPDIR=/var/www/xhgui
+-ARG WEBROOT=$APPDIR/webroot
+-WORKDIR $APPDIR
+-
+-RUN mkdir -p cache && chmod -R 777 cache
+-COPY --from=build /app $APPDIR/
+diff --git a/README.md b/README.md
+index c7d4655..95d2a8f 100644
+--- a/README.md
++++ b/README.md
+@@ -22,5 +22,2 @@ XHGui has the following requirements:
+- * PHP version 5.6 or later.
+- * [MongoDB Extension](http://pecl.php.net/package/mongodb) MongoDB PHP driver.
+-   XHGui requires verison 1.3.0 or later.
+- * [MongoDB](http://www.mongodb.org/) MongoDB Itself. XHGui requires version 2.2.0 or later.
+- * One of [XHProf](http://pecl.php.net/package/xhprof),
++ * PHP version 5.5 or later.
++ * [XHProf](http://pecl.php.net/package/xhprof),
+@@ -28,0 +26,5 @@ XHGui has the following requirements:
++ * [MongoDB Extension](http://pecl.php.net/package/mongo) MongoDB PHP driver.
++   XHGui requires verison 1.3.0 or later.
++ * [MongoDB](http://www.mongodb.org/) MongoDB Itself. XHGui requires version 2.2.0 or later.
++ * [mcrypt](http://php.net/manual/en/book.mcrypt.php) PHP must be configured
++   with mcrypt (which is a dependency of Slim).
+@@ -33,2 +35,2 @@ XHGui has the following requirements:
+-Installation from source
+-========================
++Installation
++============
+@@ -36 +38 @@ Installation from source
+-1. Clone or download `xhgui` from GitHub.
++1. Clone or download `xhgui` from Github.
+@@ -45 +47 @@ Installation from source
+-   ```bash
++   ```
+@@ -74 +75,0 @@ Installation from source
+-   > db.results.ensureIndex( { 'meta.simple_url' : 1 } )
+@@ -80 +81 @@ Installation from source
+-   ```bash
++   ```
+@@ -88,17 +88,0 @@ Installation from source
+-Installation with Docker
+-========================
+-
+-This setup uses [docker-compose] to orchestrate docker containers.
+-
+-1. Clone or download `xhgui` from GitHub.
+-
+-2. Startup the containers: `docker-compose up -d`
+-
+-3. Open your browser at http://xhgui.127.0.0.1.xip.io:8142 or just http://localhost:8142
+-
+-4. To customize xhgui, copy `config/config.default.php` to `config/config.php` and edit that file.
+-
+-5. To customize docker-compose, copy `docker-compose.yml` to `docker-compose.override.yml` and edit that file.
+-
+-[docker-compose]: https://docs.docker.com/compose/
+-
+@@ -118 +102 @@ For Apache, you can do the following to enable URL rewriting:
+-    ```apache
++    ```
+@@ -128 +112 @@ For Apache, you can do the following to enable URL rewriting:
+-    ```apache
++    ```
+@@ -134 +118 @@ For Apache, you can do the following to enable URL rewriting:
+-For nginx and fast-cgi, you can use the following snippet as a start:
++For nginx and fast-cgi, you can the following snippet as a start:
+@@ -136 +120 @@ For nginx and fast-cgi, you can use the following snippet as a start:
+-```nginx
++```
+@@ -146 +130 @@ server {
+-        try_files $uri $uri/ /index.php?$args;
++        try_files $uri $uri/ /index.php?$uri&$args;
+@@ -163 +147 @@ Configure XHGui Profiling Rate
+-After installing XHGui, you may want to change how frequently you
++After installing XHGui, you may want to do change how frequently you
+@@ -224,2 +207,0 @@ The URL argument is the `REQUEST_URI` or `argv` value.
+-Configure ignored functions
+----------------------------
+@@ -227,3 +209,40 @@ Configure ignored functions
+-You can use the `profiler.options` configuration value to set additional options
+-for the profiler extension. This is useful when you want to exclude specific
+-functions from your profiler data:
++Profile an Application or Site
++==============================
++
++The simplest way to profile an application is to use
++`external/header.php`. `external/header.php` is designed to be combined
++with PHP's
++[auto_prepend_file](http://www.php.net/manual/en/ini.core.php#ini.auto-pr
++epend-file) directive. You can enable `auto_prepend_file` system-wide
++through `php.ini`. Alternatively, you can enable `auto_prepend_file` per
++virtual host.
++
++With apache this would look like:
++
++```
++<VirtualHost *:80>
++  php_admin_value auto_prepend_file "/Users/markstory/Sites/xhgui/external/header.php"
++  DocumentRoot "/Users/markstory/Sites/awesome-thing/app/webroot/"
++  ServerName site.localhost
++</VirtualHost>
++```
++With Nginx in fastcgi mode you could use:
++
++```
++server {
++  listen 80;
++  server_name site.localhost;
++  root /Users/markstory/Sites/awesome-thing/app/webroot/;
++  fastcgi_param PHP_VALUE "auto_prepend_file=/Users/markstory/Sites/xhgui/external/header.php";
++}
++```
++
++Profile a CLI Script
++====================
++
++The simplest way to profile a CLI is to use
++`external/header.php`. `external/header.php` is designed to be combined with PHP's
++[auto_prepend_file](http://www.php.net/manual/en/ini.core.php#ini.auto-prepend-file)
++directive. You can enable `auto_prepend_file` system-wide
++through `php.ini`. Alternatively,
++you can enable include the `header.php` at the top of your script:
+@@ -232,7 +251,3 @@ functions from your profiler data:
+-// In config/config.php
+-return array(
+-    //Other config
+-    'profiler.options' => [
+-        'ignored_functions' => ['call_user_func', 'call_user_func_array']
+-    ]
+-);
++<?php
++require '/path/to/xhgui/external/header.php';
++// Rest of script.
+@@ -241,2 +256 @@ return array(
+-Profiling a Web Request or CLI script
+-=====================================
++You can alternatively use the `-d` flag when running php:
+@@ -244,3 +258,3 @@ Profiling a Web Request or CLI script
+-Using [xhgui-collector](https://github.com/perftools/xhgui-collector) you can
+-collect data from your web applications and CLI scripts. This data is then
+-pushed into xhgui's database where it can be viewed with this application.
++```
++php -d auto_prepend_file=/path/to/xhgui/external/header.php do_work.php
++```
+@@ -268 +282 @@ The following demonstrate the use of `external/import.php`:
+-```bash
++```
+@@ -316,13 +329,0 @@ Some Notes:
+-Using Tideways Extension
+-========================
+-
+-The XHProf PHP extension is not compatible with PHP7.0+. Instead you'll need to
+-use the [tideways_xhprof extension](https://github.com/tideways/php-profiler-extension).
+-
+-Once installed, you can use the following configuration data:
+-
+-```ini
+-[tideways_xhprof]
+-extension="/path/to/tideways/tideways_xhprof.so"
+-```
+-
+diff --git a/composer.json b/composer.json
+index 14ff86d..6c2c1e9 100644
+--- a/composer.json
++++ b/composer.json
+@@ -3,0 +4 @@
++    "version": "0.1",
+@@ -11,6 +12,5 @@
+-        "php": "^5.6 || ^7.0",
+-        "slim/slim": "^2.6.3",
+-        "slim/views": "^0.1.0",
+-        "twig/twig": "~1.17",
+-        "pimple/pimple": "^1.0.2",
+-        "perftools/xhgui-collector": "^1.7.0"
++        "php": ">=5.3.0",
++        "slim/slim": "2.3.1",
++        "slim/views": "0.1.0",
++        "twig/twig": "^1.13.1",
++        "pimple/pimple": "1.0.2"
+@@ -19,6 +19,3 @@
+-        "alcaeus/mongo-php-adapter": "^1.1",
+-        "phpunit/phpunit": "^5.7.27 | ^6.5.13"
+-    },
+-    "scripts": {
+-        "test": "phpunit",
+-        "cover": "phpunit --coverage-clover=unittest-coverage.clover"
++        "alcaeus/mongo-php-adapter": "^1.0",
++        "phpunit/phpunit": "3.7.x-dev",
++        "ext-dom": "*"
+diff --git a/composer.lock b/composer.lock
+new file mode 100644
+index 0000000..a80b694
+--- /dev/null
++++ b/composer.lock
+@@ -0,0 +1,759 @@
++{
++    "_readme": [
++        "This file locks the dependencies of your project to a known state",
++        "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#composer-lock-the-lock-file",
++        "This file is @generated automatically"
++    ],
++    "hash": "b55db86e26b70185d381a7279275ca0b",
++    "content-hash": "cc898e8b6c3e10e10a03c782e00f3934",
++    "packages": [
++        {
++            "name": "pimple/pimple",
++            "version": "v1.0.2",
++            "source": {
++                "type": "git",
++                "url": "https://github.com/silexphp/Pimple.git",
++                "reference": "ae11e57e8c2bb414b2ff93396dbbfc0eb92feb94"
++            },
++            "dist": {
++                "type": "zip",
++                "url": "https://api.github.com/repos/silexphp/Pimple/zipball/ae11e57e8c2bb414b2ff93396dbbfc0eb92feb94",
++                "reference": "ae11e57e8c2bb414b2ff93396dbbfc0eb92feb94",
++                "shasum": ""
++            },
++            "require": {
++                "php": ">=5.3.0"
++            },
++            "type": "library",
++            "extra": {
++                "branch-alias": {
++                    "dev-master": "1.0.x-dev"
++                }
++            },
++            "autoload": {
++                "psr-0": {
++                    "Pimple": "lib/"
++                }
++            },
++            "notification-url": "https://packagist.org/downloads/",
++            "license": [
++                "MIT"
++            ],
++            "authors": [
++                {
++                    "name": "Fabien Potencier",
++                    "email": "fabien@symfony.com"
++                }
++            ],
++            "description": "Pimple is a simple Dependency Injection Container for PHP 5.3",
++            "homepage": "http://pimple.sensiolabs.org",
++            "keywords": [
++                "container",
++                "dependency injection"
++            ],
++            "time": "2013-03-08 08:21:40"
++        },
++        {
++            "name": "slim/slim",
++            "version": "2.3.1",
++            "source": {
++                "type": "git",
++                "url": "https://github.com/slimphp/Slim.git",
++                "reference": "2e540cc392644b9b5cdcc57e5576db5a92ca2149"
++            },
++            "dist": {
++                "type": "zip",
++                "url": "https://api.github.com/repos/slimphp/Slim/zipball/2e540cc392644b9b5cdcc57e5576db5a92ca2149",
++                "reference": "2e540cc392644b9b5cdcc57e5576db5a92ca2149",
++                "shasum": ""
++            },
++            "require": {
++                "ext-mcrypt": "*",
++                "php": ">=5.3.0"
++            },
++            "type": "library",
++            "autoload": {
++                "psr-0": {
++                    "Slim": "."
++                }
++            },
++            "notification-url": "https://packagist.org/downloads/",
++            "license": [
++                "MIT"
++            ],
++            "authors": [
++                {
++                    "name": "Josh Lockhart",
++                    "email": "info@joshlockhart.com",
++                    "homepage": "http://www.joshlockhart.com/"
++                }
++            ],
++            "description": "Slim Framework, a PHP micro framework",
++            "homepage": "http://github.com/codeguy/Slim",
++            "keywords": [
++                "microframework",
++                "rest",
++                "router"
++            ],
++            "time": "2013-07-20 18:38:05"
++        },
++        {
++            "name": "slim/views",
++            "version": "0.1.0",
++            "target-dir": "Slim/Views",
++            "source": {
++                "type": "git",
++                "url": "https://github.com/slimphp/Slim-Views.git",
++                "reference": "d5eca1c0932aadf7255d83f3ed02ffc07c3c8297"
++            },
++            "dist": {
++                "type": "zip",
++                "url": "https://api.github.com/repos/slimphp/Slim-Views/zipball/d5eca1c0932aadf7255d83f3ed02ffc07c3c8297",
++                "reference": "d5eca1c0932aadf7255d83f3ed02ffc07c3c8297",
++                "shasum": ""
++            },
++            "require": {
++                "php": ">=5.3.0",
++                "slim/slim": ">=2.0.0"
++            },
++            "type": "library",
++            "autoload": {
++                "psr-0": {
++                    "Slim\\Views": ""
++                }
++            },
++            "notification-url": "https://packagist.org/downloads/",
++            "license": [
++                "MIT"
++            ],
++            "authors": [
++                {
++                    "name": "Josh Lockhart",
++                    "email": "info@joshlockhart.com",
++                    "homepage": "http://www.joshlockhart.com/"
++                },
++                {
++                    "name": "Andrew Smith",
++                    "email": "a.smith@silentworks.co.uk",
++                    "homepage": "http://thoughts.silentworks.co.uk/"
++                }
++            ],
++            "description": "Twig View Parser package for the Slim Framework",
++            "homepage": "http://github.com/codeguy/Slim-Views",
++            "keywords": [
++                "extensions",
++                "slimphp",
++                "templating"
++            ],
++            "time": "2013-07-10 07:34:17"
++        },
++        {
++            "name": "twig/twig",
++            "version": "v1.24.1",
++            "source": {
++                "type": "git",
++                "url": "https://github.com/twigphp/Twig.git",
++                "reference": "3566d311a92aae4deec6e48682dc5a4528c4a512"
++            },
++            "dist": {
++                "type": "zip",
++                "url": "https://api.github.com/repos/twigphp/Twig/zipball/3566d311a92aae4deec6e48682dc5a4528c4a512",
++                "reference": "3566d311a92aae4deec6e48682dc5a4528c4a512",
++                "shasum": ""
++            },
++            "require": {
++                "php": ">=5.2.7"
++            },
++            "require-dev": {
++                "symfony/debug": "~2.7",
++                "symfony/phpunit-bridge": "~2.7"
++            },
++            "type": "library",
++            "extra": {
++                "branch-alias": {
++                    "dev-master": "1.24-dev"
++                }
++            },
++            "autoload": {
++                "psr-0": {
++                    "Twig_": "lib/"
++                }
++            },
++            "notification-url": "https://packagist.org/downloads/",
++            "license": [
++                "BSD-3-Clause"
++            ],
++            "authors": [
++                {
++                    "name": "Fabien Potencier",
++                    "email": "fabien@symfony.com",
++                    "homepage": "http://fabien.potencier.org",
++                    "role": "Lead Developer"
++                },
++                {
++                    "name": "Armin Ronacher",
++                    "email": "armin.ronacher@active-4.com",
++                    "role": "Project Founder"
++                },
++                {
++                    "name": "Twig Team",
++                    "homepage": "http://twig.sensiolabs.org/contributors",
++                    "role": "Contributors"
++                }
++            ],
++            "description": "Twig, the flexible, fast, and secure template language for PHP",
++            "homepage": "http://twig.sensiolabs.org",
++            "keywords": [
++                "templating"
++            ],
++            "time": "2016-05-30 09:11:59"
++        }
++    ],
++    "packages-dev": [
++        {
++            "name": "alcaeus/mongo-php-adapter",
++            "version": "1.0.5",
++            "source": {
++                "type": "git",
++                "url": "https://github.com/alcaeus/mongo-php-adapter.git",
++                "reference": "db7ef240fc9de81cd093d4d7e401a30b79023196"
++            },
++            "dist": {
++                "type": "zip",
++                "url": "https://api.github.com/repos/alcaeus/mongo-php-adapter/zipball/db7ef240fc9de81cd093d4d7e401a30b79023196",
++                "reference": "db7ef240fc9de81cd093d4d7e401a30b79023196",
++                "shasum": ""
++            },
++            "require": {
++                "ext-hash": "*",
++                "mongodb/mongodb": "^1.0.1",
++                "php": "^5.5 || ^7.0"
++            },
++            "provide": {
++                "ext-mongo": "1.6.13"
++            },
++            "require-dev": {
++                "phpunit/phpunit": "^4.8 || ^5.0"
++            },
++            "type": "library",
++            "extra": {
++                "branch-alias": {
++                    "dev-master": "1.0.x-dev"
++                }
++            },
++            "autoload": {
++                "psr-0": {
++                    "Mongo": "lib/Mongo"
++                },
++                "psr-4": {
++                    "Alcaeus\\MongoDbAdapter\\": "lib/Alcaeus/MongoDbAdapter"
++                },
++                "files": [
++                    "lib/Mongo/functions.php"
++                ]
++            },
++            "notification-url": "https://packagist.org/downloads/",
++            "license": [
++                "MIT"
++            ],
++            "authors": [
++                {
++                    "name": "alcaeus",
++                    "email": "alcaeus@alcaeus.org"
++                },
++                {
++                    "name": "Olivier Lechevalier",
++                    "email": "olivier.lechevalier@gmail.com"
++                }
++            ],
++            "description": "Adapter to provide ext-mongo interface on top of mongo-php-libary",
++            "keywords": [
++                "database",
++                "mongodb"
++            ],
++            "time": "2016-07-03 16:16:40"
++        },
++        {
++            "name": "mongodb/mongodb",
++            "version": "1.0.2",
++            "source": {
++                "type": "git",
++                "url": "https://github.com/mongodb/mongo-php-library.git",
++                "reference": "faf8a1d86b5c10684ef91fa6c81475b0c7f95240"
++            },
++            "dist": {
++                "type": "zip",
++                "url": "https://api.github.com/repos/mongodb/mongo-php-library/zipball/faf8a1d86b5c10684ef91fa6c81475b0c7f95240",
++                "reference": "faf8a1d86b5c10684ef91fa6c81475b0c7f95240",
++                "shasum": ""
++            },
++            "require": {
++                "ext-mongodb": "^1.1.0",
++                "php": ">=5.4"
++            },
++            "type": "library",
++            "autoload": {
++                "psr-4": {
++                    "MongoDB\\": "src/"
++                },
++                "files": [
++                    "src/functions.php"
++                ]
++            },
++            "notification-url": "https://packagist.org/downloads/",
++            "license": [
++                "Apache-2.0"
++            ],
++            "authors": [
++                {
++                    "name": "Jeremy Mikola",
++                    "email": "jmikola@gmail.com"
++                },
++                {
++                    "name": "Hannes Magnusson",
++                    "email": "bjori@mongodb.com"
++                },
++                {
++                    "name": "Derick Rethans",
++                    "email": "github@derickrethans.nl"
++                }
++            ],
++            "description": "MongoDB driver library",
++            "homepage": "https://jira.mongodb.org/browse/PHPLIB",
++            "keywords": [
++                "database",
++                "driver",
++                "mongodb",
++                "persistence"
++            ],
++            "time": "2016-03-30 19:10:28"
++        },
++        {
++            "name": "phpunit/php-code-coverage",
++            "version": "1.2.18",
++            "source": {
++                "type": "git",
++                "url": "https://github.com/sebastianbergmann/php-code-coverage.git",
++                "reference": "fe2466802556d3fe4e4d1d58ffd3ccfd0a19be0b"
++            },
++            "dist": {
++                "type": "zip",
++                "url": "https://api.github.com/repos/sebastianbergmann/php-code-coverage/zipball/fe2466802556d3fe4e4d1d58ffd3ccfd0a19be0b",
++                "reference": "fe2466802556d3fe4e4d1d58ffd3ccfd0a19be0b",
++                "shasum": ""
++            },
++            "require": {
++                "php": ">=5.3.3",
++                "phpunit/php-file-iterator": ">=1.3.0@stable",
++                "phpunit/php-text-template": ">=1.2.0@stable",
++                "phpunit/php-token-stream": ">=1.1.3,<1.3.0"
++            },
++            "require-dev": {
++                "phpunit/phpunit": "3.7.*@dev"
++            },
++            "suggest": {
++                "ext-dom": "*",
++                "ext-xdebug": ">=2.0.5"
++            },
++            "type": "library",
++            "extra": {
++                "branch-alias": {
++                    "dev-master": "1.2.x-dev"
++                }
++            },
++            "autoload": {
++                "classmap": [
++                    "PHP/"
++                ]
++            },
++            "notification-url": "https://packagist.org/downloads/",
++            "include-path": [
++                ""
++            ],
++            "license": [
++                "BSD-3-Clause"
++            ],
++            "authors": [
++                {
++                    "name": "Sebastian Bergmann",
++                    "email": "sb@sebastian-bergmann.de",
++                    "role": "lead"
++                }
++            ],
++            "description": "Library that provides collection, processing, and rendering functionality for PHP code coverage information.",
++            "homepage": "https://github.com/sebastianbergmann/php-code-coverage",
++            "keywords": [
++                "coverage",
++                "testing",
++                "xunit"
++            ],
++            "time": "2014-09-02 10:13:14"
++        },
++        {
++            "name": "phpunit/php-file-iterator",
++            "version": "1.4.1",
++            "source": {
++                "type": "git",
++                "url": "https://github.com/sebastianbergmann/php-file-iterator.git",
++                "reference": "6150bf2c35d3fc379e50c7602b75caceaa39dbf0"
++            },
++            "dist": {
++                "type": "zip",
++                "url": "https://api.github.com/repos/sebastianbergmann/php-file-iterator/zipball/6150bf2c35d3fc379e50c7602b75caceaa39dbf0",
++                "reference": "6150bf2c35d3fc379e50c7602b75caceaa39dbf0",
++                "shasum": ""
++            },
++            "require": {
++                "php": ">=5.3.3"
++            },
++            "type": "library",
++            "extra": {
++                "branch-alias": {
++                    "dev-master": "1.4.x-dev"
++                }
++            },
++            "autoload": {
++                "classmap": [
++                    "src/"
++                ]
++            },
++            "notification-url": "https://packagist.org/downloads/",
++            "license": [
++                "BSD-3-Clause"
++            ],
++            "authors": [
++                {
++                    "name": "Sebastian Bergmann",
++                    "email": "sb@sebastian-bergmann.de",
++                    "role": "lead"
++                }
++            ],
++            "description": "FilterIterator implementation that filters files based on a list of suffixes.",
++            "homepage": "https://github.com/sebastianbergmann/php-file-iterator/",
++            "keywords": [
++                "filesystem",
++                "iterator"
++            ],
++            "time": "2015-06-21 13:08:43"
++        },
++        {
++            "name": "phpunit/php-text-template",
++            "version": "1.2.1",
++            "source": {
++                "type": "git",
++                "url": "https://github.com/sebastianbergmann/php-text-template.git",
++                "reference": "31f8b717e51d9a2afca6c9f046f5d69fc27c8686"
++            },
++            "dist": {
++                "type": "zip",
++                "url": "https://api.github.com/repos/sebastianbergmann/php-text-template/zipball/31f8b717e51d9a2afca6c9f046f5d69fc27c8686",
++                "reference": "31f8b717e51d9a2afca6c9f046f5d69fc27c8686",
++                "shasum": ""
++            },
++            "require": {
++                "php": ">=5.3.3"
++            },
++            "type": "library",
++            "autoload": {
++                "classmap": [
++                    "src/"
++                ]
++            },
++            "notification-url": "https://packagist.org/downloads/",
++            "license": [
++                "BSD-3-Clause"
++            ],
++            "authors": [
++                {
++                    "name": "Sebastian Bergmann",
++                    "email": "sebastian@phpunit.de",
++                    "role": "lead"
++                }
++            ],
++            "description": "Simple template engine.",
++            "homepage": "https://github.com/sebastianbergmann/php-text-template/",
++            "keywords": [
++                "template"
++            ],
++            "time": "2015-06-21 13:50:34"
++        },
++        {
++            "name": "phpunit/php-timer",
++            "version": "1.0.8",
++            "source": {
++                "type": "git",
++                "url": "https://github.com/sebastianbergmann/php-timer.git",
++                "reference": "38e9124049cf1a164f1e4537caf19c99bf1eb260"
++            },
++            "dist": {
++                "type": "zip",
++                "url": "https://api.github.com/repos/sebastianbergmann/php-timer/zipball/38e9124049cf1a164f1e4537caf19c99bf1eb260",
++                "reference": "38e9124049cf1a164f1e4537caf19c99bf1eb260",
++                "shasum": ""
++            },
++            "require": {
++                "php": ">=5.3.3"
++            },
++            "require-dev": {
++                "phpunit/phpunit": "~4|~5"
++            },
++            "type": "library",
++            "autoload": {
++                "classmap": [
++                    "src/"
++                ]
++            },
++            "notification-url": "https://packagist.org/downloads/",
++            "license": [
++                "BSD-3-Clause"
++            ],
++            "authors": [
++                {
++                    "name": "Sebastian Bergmann",
++                    "email": "sb@sebastian-bergmann.de",
++                    "role": "lead"
++                }
++            ],
++            "description": "Utility class for timing",
++            "homepage": "https://github.com/sebastianbergmann/php-timer/",
++            "keywords": [
++                "timer"
++            ],
++            "time": "2016-05-12 18:03:57"
++        },
++        {
++            "name": "phpunit/php-token-stream",
++            "version": "1.2.2",
++            "source": {
++                "type": "git",
++                "url": "https://github.com/sebastianbergmann/php-token-stream.git",
++                "reference": "ad4e1e23ae01b483c16f600ff1bebec184588e32"
++            },
++            "dist": {
++                "type": "zip",
++                "url": "https://api.github.com/repos/sebastianbergmann/php-token-stream/zipball/ad4e1e23ae01b483c16f600ff1bebec184588e32",
++                "reference": "ad4e1e23ae01b483c16f600ff1bebec184588e32",
++                "shasum": ""
++            },
++            "require": {
++                "ext-tokenizer": "*",
++                "php": ">=5.3.3"
++            },
++            "type": "library",
++            "extra": {
++                "branch-alias": {
++                    "dev-master": "1.2-dev"
++                }
++            },
++            "autoload": {
++                "classmap": [
++                    "PHP/"
++                ]
++            },
++            "notification-url": "https://packagist.org/downloads/",
++            "include-path": [
++                ""
++            ],
++            "license": [
++                "BSD-3-Clause"
++            ],
++            "authors": [
++                {
++                    "name": "Sebastian Bergmann",
++                    "email": "sb@sebastian-bergmann.de",
++                    "role": "lead"
++                }
++            ],
++            "description": "Wrapper around PHP's tokenizer extension.",
++            "homepage": "https://github.com/sebastianbergmann/php-token-stream/",
++            "keywords": [
++                "tokenizer"
++            ],
++            "time": "2014-03-03 05:10:30"
++        },
++        {
++            "name": "phpunit/phpunit",
++            "version": "3.7.x-dev",
++            "source": {
++                "type": "git",
++                "url": "https://github.com/sebastianbergmann/phpunit.git",
++                "reference": "38709dc22d519a3d1be46849868aa2ddf822bcf6"
++            },
++            "dist": {
++                "type": "zip",
++                "url": "https://api.github.com/repos/sebastianbergmann/phpunit/zipball/38709dc22d519a3d1be46849868aa2ddf822bcf6",
++                "reference": "38709dc22d519a3d1be46849868aa2ddf822bcf6",
++                "shasum": ""
++            },
++            "require": {
++                "ext-ctype": "*",
++                "ext-dom": "*",
++                "ext-json": "*",
++                "ext-pcre": "*",
++                "ext-reflection": "*",
++                "ext-spl": "*",
++                "php": ">=5.3.3",
++                "phpunit/php-code-coverage": "~1.2",
++                "phpunit/php-file-iterator": "~1.3",
++                "phpunit/php-text-template": "~1.1",
++                "phpunit/php-timer": "~1.0",
++                "phpunit/phpunit-mock-objects": "~1.2",
++                "symfony/yaml": "~2.0"
++            },
++            "require-dev": {
++                "pear-pear.php.net/pear": "1.9.4"
++            },
++            "suggest": {
++                "phpunit/php-invoker": "~1.1"
++            },
++            "bin": [
++                "composer/bin/phpunit"
++            ],
++            "type": "library",
++            "extra": {
++                "branch-alias": {
++                    "dev-master": "3.7.x-dev"
++                }
++            },
++            "autoload": {
++                "classmap": [
++                    "PHPUnit/"
++                ]
++            },
++            "notification-url": "https://packagist.org/downloads/",
++            "include-path": [
++                "",
++                "../../symfony/yaml/"
++            ],
++            "license": [
++                "BSD-3-Clause"
++            ],
++            "authors": [
++                {
++                    "name": "Sebastian Bergmann",
++                    "email": "sebastian@phpunit.de",
++                    "role": "lead"
++                }
++            ],
++            "description": "The PHP Unit Testing framework.",
++            "homepage": "http://www.phpunit.de/",
++            "keywords": [
++                "phpunit",
++                "testing",
++                "xunit"
++            ],
++            "time": "2014-10-17 09:04:17"
++        },
++        {
++            "name": "phpunit/phpunit-mock-objects",
++            "version": "1.2.3",
++            "source": {
++                "type": "git",
++                "url": "https://github.com/sebastianbergmann/phpunit-mock-objects.git",
++                "reference": "5794e3c5c5ba0fb037b11d8151add2a07fa82875"
++            },
++            "dist": {
++                "type": "zip",
++                "url": "https://api.github.com/repos/sebastianbergmann/phpunit-mock-objects/zipball/5794e3c5c5ba0fb037b11d8151add2a07fa82875",
++                "reference": "5794e3c5c5ba0fb037b11d8151add2a07fa82875",
++                "shasum": ""
++            },
++            "require": {
++                "php": ">=5.3.3",
++                "phpunit/php-text-template": ">=1.1.1@stable"
++            },
++            "suggest": {
++                "ext-soap": "*"
++            },
++            "type": "library",
++            "autoload": {
++                "classmap": [
++                    "PHPUnit/"
++                ]
++            },
++            "notification-url": "https://packagist.org/downloads/",
++            "include-path": [
++                ""
++            ],
++            "license": [
++                "BSD-3-Clause"
++            ],
++            "authors": [
++                {
++                    "name": "Sebastian Bergmann",
++                    "email": "sb@sebastian-bergmann.de",
++                    "role": "lead"
++                }
++            ],
++            "description": "Mock Object library for PHPUnit",
++            "homepage": "https://github.com/sebastianbergmann/phpunit-mock-objects/",
++            "keywords": [
++                "mock",
++                "xunit"
++            ],
++            "time": "2013-01-13 10:24:48"
++        },
++        {
++            "name": "symfony/yaml",
++            "version": "v2.8.9",
++            "source": {
++                "type": "git",
++                "url": "https://github.com/symfony/yaml.git",
++                "reference": "0ceab136f43ed9d3e97b3eea32a7855dc50c121d"
++            },
++            "dist": {
++                "type": "zip",
++                "url": "https://api.github.com/repos/symfony/yaml/zipball/0ceab136f43ed9d3e97b3eea32a7855dc50c121d",
++                "reference": "0ceab136f43ed9d3e97b3eea32a7855dc50c121d",
++                "shasum": ""
++            },
++            "require": {
++                "php": ">=5.3.9"
++            },
++            "type": "library",
++            "extra": {
++                "branch-alias": {
++                    "dev-master": "2.8-dev"
++                }
++            },
++            "autoload": {
++                "psr-4": {
++                    "Symfony\\Component\\Yaml\\": ""
++                },
++                "exclude-from-classmap": [
++                    "/Tests/"
++                ]
++            },
++            "notification-url": "https://packagist.org/downloads/",
++            "license": [
++                "MIT"
++            ],
++            "authors": [
++                {
++                    "name": "Fabien Potencier",
++                    "email": "fabien@symfony.com"
++                },
++                {
++                    "name": "Symfony Community",
++                    "homepage": "https://symfony.com/contributors"
++                }
++            ],
++            "description": "Symfony Yaml Component",
++            "homepage": "https://symfony.com",
++            "time": "2016-07-17 09:06:15"
++        }
++    ],
++    "aliases": [],
++    "minimum-stability": "stable",
++    "stability-flags": {
++        "phpunit/phpunit": 20
++    },
++    "prefer-stable": false,
++    "prefer-lowest": false,
++    "platform": {
++        "php": ">=5.3.0"
++    },
++    "platform-dev": {
++        "ext-dom": "*"
++    }
++}
+diff --git a/config/config.default.php b/config/config.default.php
+index 383c921..ba1b2f8 100644
+--- a/config/config.default.php
++++ b/config/config.default.php
+@@ -3,4 +3 @@
+- * Default configuration for XHGui.
+- *
+- * To change these, create a called `config.php` file in the same directory,
+- * and return an array from there with your overriding settings.
++ * Default configuration for Xhgui
+@@ -8 +4,0 @@
+-
+@@ -10,10 +6,8 @@ return array(
+-    // Which backend to use for Xhgui_Saver.
+-    // Must be one of 'mongodb', or 'file'.
+-    //
+-    // Example (save to a temporary file):
+-    //
+-    //     'save.handler' => 'file',
+-    //     # Beware of file locking. You can adujst this file path
+-    //     # to reduce locking problems (eg uniqid, time ...)
+-    //     'save.handler.filename' => __DIR__.'/../data/xhgui_'.date('Ymd').'.dat',
+-    //
++    'debug' => false,
++    'mode' => 'development',
++
++    // Can be either mongodb or file.
++    /* 
++    'save.handler' => 'file',
++    'save.handler.filename' => dirname(__DIR__) . '/cache/' . 'xhgui.data.' . microtime(true) . '_' . substr(md5($url), 0, 6),
++    */
+@@ -22,6 +16,5 @@ return array(
+-    'pdo' => array(
+-        'dsn' => null,
+-        'user' => null,
+-        'pass' => null,
+-        'table' => 'results'
+-    ),
++    // Needed for file save handler. Beware of file locking. You can adujst this file path 
++    // to reduce locking problems (eg uniqid, time ...)
++    //'save.handler.filename' => __DIR__.'/../data/xhgui_'.date('Ymd').'.dat',
++    'db.host' => 'mongodb://127.0.0.1:27017',
++    'db.db' => 'xhprof',
+@@ -29,12 +22,2 @@ return array(
+-    // Database options for MongoDB.
+-    //
+-    // - db.host: Connection string in the form `mongodb://[ip or host]:[port]`.
+-    //
+-    // - db.db: The database name.
+-    //
+-    // - db.options: Additional options for the MongoClient contructor,
+-    //               for example 'username', 'password', or 'replicaSet'.
+-    //               See <https://secure.php.net/mongoclient_construct#options>.
+-    //
+-    'db.host' => getenv('XHGUI_MONGO_HOST') ?: 'mongodb://127.0.0.1:27017',
+-    'db.db' => getenv('XHGUI_MONGO_DATABASE') ?: 'xhprof',
++    // Allows you to pass additional options like replicaSet to MongoClient.
++    // 'username', 'password' and 'db' (where the user is added)
+@@ -42,4 +25,4 @@ return array(
+-    'run.view.filter.names' => array(
+-        'Zend*',
+-        'Composer*',
+-    ),
++    'templates.path' => dirname(__DIR__) . '/src/templates',
++    'date.format' => 'M jS H:i:s',
++    'detail.count' => 6,
++    'page.limit' => 25,
+@@ -47,15 +30,2 @@ return array(
+-    // Whether to instrument a user request.
+-    //
+-    // NOTE: Only applies to using the external/header.php include.
+-    //
+-    // Must be a function that returns a boolean,
+-    // or any non-function value to disable the profiler.
+-    //
+-    // Default: Profile 1 in 100 requests.
+-    //
+-    // Example (profile all requests):
+-    //
+-    //     'profiler.enabled' => function() {
+-    //         return true;
+-    //     },
+-    //
++    // Profile 1 in 100 requests.
++    // You can return true to profile every request.
+@@ -66,35 +36,3 @@ return array(
+-    // Transformation for the "simple" variant of the URL.
+-    // This is stored as `meta.simple_url` and used for
+-    // aggregate data.
+-    //
+-    // NOTE: Only applies to using the external/header.php include.
+-    //
+-    // Must be a function that returns a string, or any
+-    // non-callable value for the default behaviour.
+-    //
+-    // Default: Remove numeric values after `=`. For example,
+-    // it turns "/foo?page=2" into "/foo?page".
+-    'profiler.simple_url' => null,
+-
+-    // Enable to clean up the url saved to the DB
+-    // in this way is possible to remove sensitive data or other kind of data
+-    'profiler.replace_url' => null,
+-
+-    // Additional options to be passed to the `_enable()` function
+-    // of the profiler extension (xhprof, tideways, etc.).
+-    //
+-    // NOTE: Only applies to using the external/header.php include.
+-    'profiler.options' => array(),
+-
+-    // Date format used when browsing XHGui pages.
+-    //
+-    // Must be a format supported by the PHP date() function.
+-    // See <https://secure.php.net/date>.
+-    'date.format' => 'M jS H:i:s',
+-
+-    // The number of items to show in "Top lists" with functions
+-    // using the most time or memory resources, on XHGui Run pages.
+-    'detail.count' => 6,
+-
+-    // The number of items to show per page, on XHGui list pages.
+-    'page.limit' => 25,
++    'profiler.simple_url' => function($url) {
++        return preg_replace('/\=\d+/', '', $url);
++    }
+diff --git a/docker-compose.yml b/docker-compose.yml
+deleted file mode 100644
+index b49e47d..0000000
+--- a/docker-compose.yml
++++ /dev/null
+@@ -1,37 +0,0 @@
+-version: "3.7"
+-
+-services:
+-  app:
+-    build: .
+-    volumes:
+-      - webroot-share:/var/www/xhgui/webroot
+-      - ./config:/var/www/xhgui/config
+-    environment:
+-      - XHGUI_MONGO_HOST=mongodb://mongo:27017
+-      - XHGUI_MONGO_DATABASE=xhprof
+-
+-  web:
+-    image: nginx:1
+-    volumes:
+-      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+-      - webroot-share:/var/www/xhgui/webroot
+-    ports:
+-      - "8142:80"
+-
+-  mongo:
+-    image: percona/percona-server-mongodb:3.6
+-    # (case sensitive) engine: mmapv1, rocksdb, wiredTiger, inMemory
+-    command: --storageEngine=wiredTiger
+-    environment:
+-      - MONGO_INITDB_DATABASE=xhprof
+-    volumes:
+-      - ./mongo.init.d:/docker-entrypoint-initdb.d
+-      - mongodb:/data/db
+-    ports:
+-      - "27017:27017"
+-
+-volumes:
+-  webroot-share:
+-  mongodb:
+-
+-# vim:ts=2:sw=2:et
+diff --git a/external/header.php b/external/header.php
+index 59e0789..e51d428 100644
+--- a/external/header.php
++++ b/external/header.php
+@@ -2,2 +2,11 @@
+-// Use the config directory defined in the xhgui application.
+-define('XHGUI_CONFIG_DIR', dirname(__DIR__) . '/config/');
++/* Things you may want to tweak in here:
++ *  - xhprof_enable() uses a few constants.
++ *  - The values passed to rand() determine the the odds of any particular run being profiled.
++ *  - The MongoDB collection and such.
++ *
++ * I use unsafe writes by default, let's not slow down requests any more than I need to. As a result you will
++ * indubidubly want to ensure that writes are actually working.
++ *
++ * The easiest way to get going is to either include this file in your index.php script, or use php.ini's
++ * auto_prepend_file directive http://php.net/manual/en/ini.core.php#ini.auto-prepend-file
++ */
+@@ -5,2 +14,19 @@ define('XHGUI_CONFIG_DIR', dirname(__DIR__) . '/config/');
+-//Include autoload
+-require_once dirname(__DIR__) . '/vendor/autoload.php';
++/* xhprof_enable()
++ * See: http://php.net/manual/en/xhprof.constants.php
++ *
++ *
++ * XHPROF_FLAGS_NO_BUILTINS
++ *  Omit built in functions from return
++ *  This can be useful to simplify the output, but there's some value in seeing that you've called strpos() 2000 times
++ *  (disabled on PHP 5.5+ as it causes a segfault)
++ *
++ * XHPROF_FLAGS_CPU
++ *  Include CPU profiling information in output
++ *
++ * XHPROF_FLAGS_MEMORY (integer)
++ *  Include Memory profiling information in output
++ *
++ *
++ * Use bitwise operators to combine, so XHPROF_FLAGS_CPU | XHPROF_FLAGS_MEMORY to profile CPU and Memory
++ *
++ */
+@@ -8,2 +34,133 @@ require_once dirname(__DIR__) . '/vendor/autoload.php';
+-// Include collector script.
+-require_once dirname(__DIR__) . '/vendor/perftools/xhgui-collector/external/header.php';
++/* uprofiler support
++ * The uprofiler extension is a fork of xhprof.  See: https://github.com/FriendsOfPHP/uprofiler
++ *
++ * The two extensions are very similar, and this script will use the uprofiler extension if it is loaded,
++ * or the xhprof extension if not.  At least one of these extensions must be present.
++ *
++ * The UPROFILER_* constants mirror the XHPROF_* ones exactly, with one additional constant available:
++ *
++ * UPROFILER_FLAGS_FUNCTION_INFO (integer)
++ *  Adds more information about function calls (this information is not currently used by XHGui)
++ */
++
++/* Tideways support
++ * The tideways extension is a fork of xhprof. See https://github.com/tideways/php-profiler-extension
++ *
++ * It works on PHP 5.5+ and PHP 7 and improves on the ancient timing algorithms used by XHProf using
++ * more modern Linux APIs to collect high performance timing data.
++ *
++ * The TIDEWAYS_* constants are similar to the ones by XHProf, however you need to disable timeline
++ * mode when using XHGui, because it only supports callgraphs and we can save the overhead. Use
++ * TIDEWAYS_FLAGS_NO_SPANS to disable timeline mode.
++ */
++
++// this file should not - under no circumstances - interfere with any other application
++if (!extension_loaded('xhprof') && !extension_loaded('uprofiler') && !extension_loaded('tideways')) {
++    error_log('xhgui - either extension xhprof, uprofiler or tideways must be loaded');
++    return;
++}
++
++// Use the callbacks defined in the configuration file
++// to determine whether or not XHgui should enable profiling.
++//
++// Only load the config class so we don't pollute the host application's
++// autoloaders.
++$dir = dirname(__DIR__);
++require_once $dir . '/src/Xhgui/Config.php';
++Xhgui_Config::load($dir . '/config/config.default.php');
++if (file_exists($dir . '/config/config.php')) {
++    Xhgui_Config::load($dir . '/config/config.php');
++}
++unset($dir);
++
++if ((!extension_loaded('mongo') && !extension_loaded('mongodb')) && Xhgui_Config::read('save.handler') === 'mongodb') {
++    error_log('xhgui - extension mongo not loaded');
++    return;
++}
++
++if (!Xhgui_Config::shouldRun()) {
++    return;
++}
++
++if (!isset($_SERVER['REQUEST_TIME_FLOAT'])) {
++    $_SERVER['REQUEST_TIME_FLOAT'] = microtime(true);
++}
++
++if (extension_loaded('uprofiler')) {
++    uprofiler_enable(UPROFILER_FLAGS_CPU | UPROFILER_FLAGS_MEMORY);
++} else if (extension_loaded('tideways')) {
++    tideways_enable(TIDEWAYS_FLAGS_CPU | TIDEWAYS_FLAGS_MEMORY | TIDEWAYS_FLAGS_NO_SPANS);
++} else {
++    if (PHP_MAJOR_VERSION == 5 && PHP_MINOR_VERSION > 4) {
++        xhprof_enable(XHPROF_FLAGS_CPU | XHPROF_FLAGS_MEMORY | XHPROF_FLAGS_NO_BUILTINS);
++    } else {
++        xhprof_enable(XHPROF_FLAGS_CPU | XHPROF_FLAGS_MEMORY);
++    }
++}
++
++register_shutdown_function(
++    function () {
++        if (extension_loaded('uprofiler')) {
++            $data['profile'] = uprofiler_disable();
++        } else if (extension_loaded('tideways')) {
++            $data['profile'] = tideways_disable();
++        } else {
++            $data['profile'] = xhprof_disable();
++        }
++
++        // ignore_user_abort(true) allows your PHP script to continue executing, even if the user has terminated their request.
++        // Further Reading: http://blog.preinheimer.com/index.php?/archives/248-When-does-a-user-abort.html
++        // flush() asks PHP to send any data remaining in the output buffers. This is normally done when the script completes, but
++        // since we're delaying that a bit by dealing with the xhprof stuff, we'll do it now to avoid making the user wait.
++        ignore_user_abort(true);
++        flush();
++
++        if (!defined('XHGUI_ROOT_DIR')) {
++            require dirname(dirname(__FILE__)) . '/src/bootstrap.php';
++        }
++
++        $uri = array_key_exists('REQUEST_URI', $_SERVER)
++            ? $_SERVER['REQUEST_URI']
++            : null;
++        if (empty($uri) && isset($_SERVER['argv'])) {
++            $cmd = basename($_SERVER['argv'][0]);
++            $uri = $cmd . ' ' . implode(' ', array_slice($_SERVER['argv'], 1));
++        }
++
++        $time = array_key_exists('REQUEST_TIME', $_SERVER)
++            ? $_SERVER['REQUEST_TIME']
++            : time();
++        $requestTimeFloat = explode('.', $_SERVER['REQUEST_TIME_FLOAT']);
++        if (!isset($requestTimeFloat[1])) {
++            $requestTimeFloat[1] = 0;
++        }
++
++        if (Xhgui_Config::read('save.handler') === 'file') {
++            $requestTs = array('sec' => $time, 'usec' => 0);
++            $requestTsMicro = array('sec' => $requestTimeFloat[0], 'usec' => $requestTimeFloat[1]);
++        } else {
++            $requestTs = new MongoDate($time);
++            $requestTsMicro = new MongoDate($requestTimeFloat[0], $requestTimeFloat[1]);
++        }
++
++        $data['meta'] = array(
++            'url' => $uri,
++            'SERVER' => $_SERVER,
++            'get' => $_GET,
++            'env' => $_ENV,
++            'simple_url' => Xhgui_Util::simpleUrl($uri),
++            'request_ts' => $requestTs,
++            'request_ts_micro' => $requestTsMicro,
++            'request_date' => date('Y-m-d', $time),
++        );
++
++        try {
++            $config = Xhgui_Config::all();
++            $config += array('db.options' => array());
++            $saver = Xhgui_Saver::factory($config);
++            $saver->save($data);
++        } catch (Exception $e) {
++            error_log('xhgui - ' . $e->getMessage());
++        }
++    }
++);
+diff --git a/external/import.php b/external/import.php
+index ec5c096..2c2e470 100644
+--- a/external/import.php
++++ b/external/import.php
+@@ -3 +3 @@ if (!defined('XHGUI_ROOT_DIR')) {
+-    require dirname(__DIR__) . '/src/bootstrap.php';
++    require dirname(dirname(__FILE__)) . '/src/bootstrap.php';
+@@ -5,0 +6 @@ if (!defined('XHGUI_ROOT_DIR')) {
++
+@@ -24 +25 @@ $container = Xhgui_ServiceContainer::instance();
+-$saver = $container['saver.mongo'];
++$saver = $container['saverMongo'];
+diff --git a/install.php b/install.php
+index 7f926dc..e2a0737 100644
+--- a/install.php
++++ b/install.php
+@@ -75 +75 @@ out("Installing dependencies.");
+-$cmd = 'php ' . __DIR__ . '/composer.phar install --prefer-dist';
++$cmd = 'php ' . __DIR__ . '/composer.phar update --prefer-dist';
+diff --git a/mongo.init.d/xhgui.js b/mongo.init.d/xhgui.js
+deleted file mode 100644
+index c386fca..0000000
+--- a/mongo.init.d/xhgui.js
++++ /dev/null
+@@ -1,5 +0,0 @@
+-db.results.ensureIndex( { 'meta.SERVER.REQUEST_TIME' : -1 } );
+-db.results.ensureIndex( { 'profile.main().wt' : -1 } );
+-db.results.ensureIndex( { 'profile.main().mu' : -1 } );
+-db.results.ensureIndex( { 'profile.main().cpu' : -1 } );
+-db.results.ensureIndex( { 'meta.url' : 1 } );
+diff --git a/nginx.conf b/nginx.conf
+deleted file mode 100644
+index 554b93c..0000000
+--- a/nginx.conf
++++ /dev/null
+@@ -1,21 +0,0 @@
+-# see https://github.com/perftools/xhgui#configuration
+-
+-server {
+-    listen 80 default_server;
+-    listen [::]:80 default_server;
+-
+-    root   /var/www/xhgui/webroot;
+-    index  index.php;
+-
+-    location / {
+-        try_files $uri $uri/ /index.php$is_args$args;
+-    }
+-
+-    location ~ \.php$ {
+-        try_files $uri =404;
+-        include /etc/nginx/fastcgi_params;
+-        fastcgi_pass    app:9000;
+-        fastcgi_index   index.php;
+-        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+-    }
+-}
+diff --git a/phpunit.xml b/phpunit.xml
+index 92925e5..de079a8 100644
+--- a/phpunit.xml
++++ b/phpunit.xml
+@@ -2,0 +3,7 @@
++    <!-- blacklist the tests and vendor directory from code coverage-->
++    <filter>
++        <blacklist>
++            <directory suffix=".php">./web/vendor</directory>
++        </blacklist>
++    </filter>
++
+@@ -4,2 +11,2 @@
+-        <testsuite>
+-            <directory suffix="Test.php">./tests</directory>
++        <testsuite name="All" suffix="Test.php">
++            <directory>./tests</directory>
+@@ -8,5 +14,0 @@
+-    <filter>
+-        <whitelist addUncoveredFilesFromWhitelist="true">
+-            <directory suffix=".php">./src</directory>
+-        </whitelist>
+-    </filter>
+diff --git a/src/Xhgui/Config.php b/src/Xhgui/Config.php
+new file mode 100644
+index 0000000..198897c
+--- /dev/null
++++ b/src/Xhgui/Config.php
+@@ -0,0 +1,85 @@
++<?php
++/**
++ * Loads and reads config file.
++ */
++class Xhgui_Config
++{
++    static $_config = array();
++
++    /**
++     * Load a config file, it will replace
++     * all the currently loaded configuration.
++     *
++     * @param string $file
++     * @return void
++     */
++    public static function load($file)
++    {
++        $config = include($file);
++        self::$_config = array_merge(self::$_config, $config);
++    }
++
++    /**
++     * Read a config value.
++     *
++     * @param string $name The name of the config variable
++     * @return The value or null.
++     */
++    public static function read($name)
++    {
++        if (isset(self::$_config[$name])) {
++            return self::$_config[$name];
++        }
++        return null;
++    }
++
++    /**
++     * Get all the configuration options.
++     *
++     * @return array
++     */
++    public static function all()
++    {
++        return self::$_config;
++    }
++
++    /**
++     * Write a config value.
++     *
++     * @param string $name The name of the config variable
++     * @param mixed $value The value of the config variable
++     * @return void
++     */
++    public static function write($name, $value)
++    {
++        self::$_config[$name] = $value;
++    }
++
++    /**
++     * Clear out the data stored in the config class.
++     *
++     * @return void
++     */
++    public static function clear()
++    {
++        self::$_config = array();
++    }
++
++    /**
++     * Called during profiler initialization
++     *
++     * Allows arbitrary conditions to be added configuring how
++     * Xhgui profiles runs.
++     *
++     * @return boolean
++     */
++    public static function shouldRun()
++    {
++        $callback = self::read('profiler.enable');
++        if (!is_callable($callback)) {
++            return false;
++        }
++        return (bool)$callback();
++    }
++
++}
+diff --git a/src/Xhgui/Controller.php b/src/Xhgui/Controller.php
+index 829f319..363ad39 100644
+--- a/src/Xhgui/Controller.php
++++ b/src/Xhgui/Controller.php
+@@ -3,3 +3 @@
+-use Slim\Slim;
+-
+-abstract class Xhgui_Controller
++class Xhgui_Controller
+@@ -7,3 +4,0 @@ abstract class Xhgui_Controller
+-    /**
+-     * @var array
+-     */
+@@ -11,4 +5,0 @@ abstract class Xhgui_Controller
+-
+-    /**
+-     * @var string|null
+-     */
+@@ -17,10 +7,0 @@ abstract class Xhgui_Controller
+-    /**
+-     * @var Slim
+-     */
+-    protected $app;
+-
+-    public function __construct(Slim $app)
+-    {
+-        $this->app = $app;
+-    }
+-
+@@ -39,13 +20 @@ abstract class Xhgui_Controller
+-        // We want to render the specified Twig template to the output buffer.
+-        // The simplest way to do that is Slim::render, but that is not allowed
+-        // in middleware, because it uses Slim\View::display which prints
+-        // directly to the native PHP output buffer.
+-        // Doing that is problematic, because the HTTP headers set via $app->response()
+-        // must be output first, which won't happen until after the middleware
+-        // is completed. Output of headers and body is done by the Slim::run entry point.
+-
+-        // The below is copied from Slim::render (slim/slim@2.6.3).
+-        // Modified to use View::fetch + Response::write, instead of View::display.
+-        $this->app->view->appendData($this->_templateVars);
+-        $body = $this->app->view->fetch($this->_template);
+-        $this->app->response->write($body);
++        $this->_app->render($this->_template, $this->_templateVars);
+diff --git a/src/Xhgui/Controller/Custom.php b/src/Xhgui/Controller/Custom.php
+index 07573c5..0c576f7 100644
+--- a/src/Xhgui/Controller/Custom.php
++++ b/src/Xhgui/Controller/Custom.php
+@@ -3,2 +2,0 @@
+-use Slim\Slim;
+-
+@@ -7,4 +5,2 @@ class Xhgui_Controller_Custom extends Xhgui_Controller
+-    /**
+-     * @var Xhgui_Searcher_Interface
+-     */
+-    protected $searcher;
++    protected $_app;
++    protected $_profiles;
+@@ -12 +8 @@ class Xhgui_Controller_Custom extends Xhgui_Controller
+-    public function __construct(Slim $app, Xhgui_Searcher_Interface $searcher)
++    public function __construct($app, $profiles)
+@@ -14,2 +10,2 @@ class Xhgui_Controller_Custom extends Xhgui_Controller
+-        parent::__construct($app);
+-        $this->searcher = $searcher;
++        $this->_app = $app;
++        $this->_profiles = $profiles;
+@@ -25 +21 @@ class Xhgui_Controller_Custom extends Xhgui_Controller
+-        $request = $this->app->request();
++        $request = $this->_app->request();
+@@ -27 +23 @@ class Xhgui_Controller_Custom extends Xhgui_Controller
+-            $res = $this->searcher->get($request->get('id'));
++            $res = $this->_profiles->get($request->get('id'));
+@@ -29 +25 @@ class Xhgui_Controller_Custom extends Xhgui_Controller
+-            $res = $this->searcher->latest();
++            $res = $this->_profiles->latest();
+@@ -39,2 +35,2 @@ class Xhgui_Controller_Custom extends Xhgui_Controller
+-        $request = $this->app->request();
+-        $response = $this->app->response();
++        $request = $this->_app->request();
++        $response = $this->_app->response();
+@@ -43 +39 @@ class Xhgui_Controller_Custom extends Xhgui_Controller
+-        $query = json_decode($request->post('query'), true);
++        $query = json_decode($request->post('query'));
+@@ -45 +41 @@ class Xhgui_Controller_Custom extends Xhgui_Controller
+-        if (null === $query) {
++        if (is_null($query)) {
+@@ -49,2 +45,2 @@ class Xhgui_Controller_Custom extends Xhgui_Controller
+-        $retrieve = json_decode($request->post('retrieve'), true);
+-        if (null === $retrieve) {
++        $retrieve = json_decode($request->post('retrieve'));
++        if (is_null($retrieve)) {
+@@ -59,3 +55 @@ class Xhgui_Controller_Custom extends Xhgui_Controller
+-        $perPage = $this->app->config('page.limit');
+-
+-        $res = $this->searcher->query($query, $perPage, $retrieve);
++        $perPage = $this->_app->config('page.limit');
+@@ -63 +57,4 @@ class Xhgui_Controller_Custom extends Xhgui_Controller
+-        return $response->body(json_encode($res));
++        $res = $this->_profiles->query($query, $retrieve)
++            ->limit($perPage);
++        $r = iterator_to_array($res);
++        return $response->body(json_encode($r));
+diff --git a/src/Xhgui/Controller/Import.php b/src/Xhgui/Controller/Import.php
+deleted file mode 100644
+index 1599284..0000000
+--- a/src/Xhgui/Controller/Import.php
++++ /dev/null
+@@ -1,29 +0,0 @@
+-<?php
+-
+-use Slim\Slim;
+-
+-class Xhgui_Controller_Import extends Xhgui_Controller
+-{
+-    /**
+-     * @var Xhgui_Saver_Interface
+-     */
+-    private $saver;
+-
+-    public function __construct(Slim $app, Xhgui_Saver_Interface $saver)
+-    {
+-        parent::__construct($app);
+-        $this->saver = $saver;
+-    }
+-
+-    public function import()
+-    {
+-        $request = $this->app->request();
+-        $response = $this->app->response();
+-
+-        $data = json_decode($request->getBody(), true);
+-        $this->saver->save($data);
+-
+-        $response['Content-Type'] = 'application/json';
+-        $response->body(json_encode(['ok' => true]));
+-    }
+-}
+diff --git a/src/Xhgui/Controller/Run.php b/src/Xhgui/Controller/Run.php
+index 4b4c6f7..3f52d39 100644
+--- a/src/Xhgui/Controller/Run.php
++++ b/src/Xhgui/Controller/Run.php
+@@ -3,2 +2,0 @@
+-use Slim\Slim;
+-
+@@ -7,11 +5 @@ class Xhgui_Controller_Run extends Xhgui_Controller
+-    /**
+-     * HTTP GET attribute name for comma separated filters
+-     */
+-    const FILTER_ARGUMENT_NAME = 'filter';
+-
+-    /**
+-     * @var Xhgui_Searcher_Interface
+-     */
+-    private $searcher;
+-
+-    public function __construct(Slim $app, Xhgui_Searcher_Interface $searcher)
++    public function __construct($app, $profiles, $watches)
+@@ -19,2 +7,3 @@ class Xhgui_Controller_Run extends Xhgui_Controller
+-        parent::__construct($app);
+-        $this->searcher = $searcher;
++        $this->_app = $app;
++        $this->_profiles = $profiles;
++        $this->_watches = $watches;
+@@ -25,8 +14 @@ class Xhgui_Controller_Run extends Xhgui_Controller
+-        $response = $this->app->response();
+-        // The list changes whenever new profiles are recorded.
+-        // Generally avoid caching, but allow re-use in browser's bfcache
+-        // and by cache proxies for concurrent requests.
+-        // https://github.com/perftools/xhgui/issues/261
+-        $response->headers->set('Cache-Control', 'public, max-age=0');
+-
+-        $request = $this->app->request();
++        $request = $this->_app->request();
+@@ -43 +25 @@ class Xhgui_Controller_Run extends Xhgui_Controller
+-        $result = $this->searcher->getAll(array(
++        $result = $this->_profiles->getAll(array(
+@@ -47 +29 @@ class Xhgui_Controller_Run extends Xhgui_Controller
+-            'perPage' => $this->app->config('page.limit'),
++            'perPage' => $this->_app->config('page.limit'),
+@@ -74 +56 @@ class Xhgui_Controller_Run extends Xhgui_Controller
+-            'date_format' => $this->app->config('date.format'),
++            'date_format' => $this->_app->config('date.format'),
+@@ -83,13 +65,3 @@ class Xhgui_Controller_Run extends Xhgui_Controller
+-        $response = $this->app->response();
+-        // Permalink views to a specific run are meant to be public and immutable.
+-        // But limit the cache to only a short period of time (enough to allow
+-        // handling of abuse or other stampedes). This way we don't have to
+-        // deal with any kind of purging system for when profiles are deleted,
+-        // or for after XHGui itself is upgraded and static assets may be
+-        // incompatible etc.
+-        // https://github.com/perftools/xhgui/issues/261
+-        $response->headers->set('Cache-Control', 'public, max-age=60, must-revalidate');
+-
+-        $request = $this->app->request();
+-        $detailCount = $this->app->config('detail.count');
+-        $result = $this->searcher->get($request->get('id'));
++        $request = $this->_app->request();
++        $detailCount = $this->_app->config('detail.count');
++        $result = $this->_profiles->get($request->get('id'));
+@@ -107 +79 @@ class Xhgui_Controller_Run extends Xhgui_Controller
+-        foreach ($this->searcher->getAllWatches() as $watch) {
++        foreach ($this->_watches->getAll() as $watch) {
+@@ -114,5 +86 @@ class Xhgui_Controller_Run extends Xhgui_Controller
+-        if (false !== $request->get(self::FILTER_ARGUMENT_NAME, false)) {
+-            $profile = $result->sort('ewt', $result->filter($result->getProfile(), $this->getFilters()));
+-        } else {
+-            $profile = $result->sort('ewt', $result->getProfile());
+-        }
++        $profile = $result->sort('ewt', $result->getProfile());
+@@ -127 +95 @@ class Xhgui_Controller_Run extends Xhgui_Controller
+-            'date_format' => $this->app->config('date.format'),
++            'date_format' => $this->_app->config('date.format'),
+@@ -131,69 +98,0 @@ class Xhgui_Controller_Run extends Xhgui_Controller
+-    /**
+-     * @return array
+-     */
+-    protected function getFilters()
+-    {
+-        $request = $this->app->request();
+-        $filterString = $request->get(self::FILTER_ARGUMENT_NAME);
+-        if (strlen($filterString) > 1 && $filterString !== 'true') {
+-            $filters = array_map('trim', explode(',', $filterString));
+-        } else {
+-            $filters = $this->app->config('run.view.filter.names');
+-        }
+-
+-        return $filters;
+-    }
+-
+-    public function deleteForm()
+-    {
+-        $request = $this->app->request();
+-        $id = $request->get('id');
+-        if (!is_string($id) || !strlen($id)) {
+-            throw new Exception('The "id" parameter is required.');
+-        }
+-
+-        // Get details
+-        $result = $this->searcher->get($id);
+-
+-        $this->_template = 'runs/delete-form.twig';
+-        $this->set(array(
+-            'run_id' => $id,
+-            'result' => $result,
+-        ));
+-    }
+-
+-    public function deleteSubmit()
+-    {
+-        $request = $this->app->request();
+-        $id = $request->post('id');
+-        // Don't call profilers->delete() unless $id is set,
+-        // otherwise it will turn the null into a MongoId and return "Sucessful".
+-        if (!is_string($id) || !strlen($id)) {
+-            // Form checks this already,
+-            // only reachable by handcrafted or malformed requests.
+-            throw new Exception('The "id" parameter is required.');
+-        }
+-
+-        // Delete the profile run.
+-        $this->searcher->delete($id);
+-
+-        $this->app->flash('success', 'Deleted profile ' . $id);
+-
+-        $this->app->redirect($this->app->urlFor('home'));
+-    }
+-
+-    public function deleteAllForm()
+-    {
+-        $this->_template = 'runs/delete-all-form.twig';
+-    }
+-
+-    public function deleteAllSubmit()
+-    {
+-        // Delete all profile runs.
+-        $this->searcher->truncate();
+-
+-        $this->app->flash('success', 'Deleted all profiles');
+-
+-        $this->app->redirect($this->app->urlFor('home'));
+-    }
+-
+@@ -202 +101 @@ class Xhgui_Controller_Run extends Xhgui_Controller
+-        $request = $this->app->request();
++        $request = $this->_app->request();
+@@ -207 +106 @@ class Xhgui_Controller_Run extends Xhgui_Controller
+-            'perPage' => $this->app->config('page.limit'),
++            'perPage' => $this->_app->config('page.limit'),
+@@ -216 +115 @@ class Xhgui_Controller_Run extends Xhgui_Controller
+-        $runs = $this->searcher->getForUrl(
++        $runs = $this->_profiles->getForUrl(
+@@ -222,4 +121 @@ class Xhgui_Controller_Run extends Xhgui_Controller
+-        if (isset($search['limit_custom']) &&
+-            strlen($search['limit_custom']) > 0 &&
+-            $search['limit_custom'][0] === 'P'
+-        ) {
++        if (isset($search['limit_custom']) && strlen($search['limit_custom']) > 0 && $search['limit_custom'][0] == 'P') {
+@@ -229 +125 @@ class Xhgui_Controller_Run extends Xhgui_Controller
+-        $chartData = $this->searcher->getPercentileForUrl(
++        $chartData = $this->_profiles->getPercentileForUrl(
+@@ -249 +145 @@ class Xhgui_Controller_Run extends Xhgui_Controller
+-            'date_format' => $this->app->config('date.format'),
++            'date_format' => $this->_app->config('date.format'),
+@@ -256 +152 @@ class Xhgui_Controller_Run extends Xhgui_Controller
+-        $request = $this->app->request();
++        $request = $this->_app->request();
+@@ -262 +158 @@ class Xhgui_Controller_Run extends Xhgui_Controller
+-            $baseRun = $this->searcher->get($request->get('base'));
++            $baseRun = $this->_profiles->get($request->get('base'));
+@@ -270 +166 @@ class Xhgui_Controller_Run extends Xhgui_Controller
+-                'perPage' => $this->app->config('page.limit'),
++                'perPage' => $this->_app->config('page.limit'),
+@@ -272 +168 @@ class Xhgui_Controller_Run extends Xhgui_Controller
+-            $candidates = $this->searcher->getForUrl(
++            $candidates = $this->_profiles->getForUrl(
+@@ -286 +182 @@ class Xhgui_Controller_Run extends Xhgui_Controller
+-            $headRun = $this->searcher->get($request->get('head'));
++            $headRun = $this->_profiles->get($request->get('head'));
+@@ -300 +196 @@ class Xhgui_Controller_Run extends Xhgui_Controller
+-            'date_format' => $this->app->config('date.format'),
++            'date_format' => $this->_app->config('date.format'),
+@@ -312 +208 @@ class Xhgui_Controller_Run extends Xhgui_Controller
+-        $request = $this->app->request();
++        $request = $this->_app->request();
+@@ -316 +212 @@ class Xhgui_Controller_Run extends Xhgui_Controller
+-        $profile = $this->searcher->get($id);
++        $profile = $this->_profiles->get($id);
+@@ -333 +229 @@ class Xhgui_Controller_Run extends Xhgui_Controller
+-        $request = $this->app->request();
++        $request = $this->_app->request();
+@@ -339 +235 @@ class Xhgui_Controller_Run extends Xhgui_Controller
+-        $profile = $this->searcher->get($id);
++        $profile = $this->_profiles->get($id);
+@@ -356,2 +252,2 @@ class Xhgui_Controller_Run extends Xhgui_Controller
+-        $request = $this->app->request();
+-        $profile = $this->searcher->get($request->get('id'));
++        $request = $this->_app->request();
++        $profile = $this->_profiles->get($request->get('id'));
+@@ -362 +258 @@ class Xhgui_Controller_Run extends Xhgui_Controller
+-            'date_format' => $this->app->config('date.format'),
++            'date_format' => $this->_app->config('date.format'),
+@@ -368,3 +264,3 @@ class Xhgui_Controller_Run extends Xhgui_Controller
+-        $request = $this->app->request();
+-        $response = $this->app->response();
+-        $profile = $this->searcher->get($request->get('id'));
++        $request = $this->_app->request();
++        $response = $this->_app->response();
++        $profile = $this->_profiles->get($request->get('id'));
+@@ -378,0 +275,25 @@ class Xhgui_Controller_Run extends Xhgui_Controller
++    public function flamegraph()
++    {
++        $request = $this->_app->request();
++        $profile = $this->_profiles->get($request->get('id'));
++
++        $this->_template = 'runs/flamegraph.twig';
++        $this->set(array(
++            'profile' => $profile,
++            'date_format' => $this->_app->config('date.format'),
++        ));
++    }
++
++    public function flamegraphData()
++    {
++        $request = $this->_app->request();
++        $response = $this->_app->response();
++        $profile = $this->_profiles->get($request->get('id'));
++        $metric = $request->get('metric') ?: 'wt';
++        $threshold = (float)$request->get('threshold') ?: 0.01;
++        $flamegraph = $profile->getFlamegraph($metric, $threshold);
++
++        $response['Content-Type'] = 'application/json';
++        return $response->body(json_encode($flamegraph));
++    }
++
+@@ -381,3 +302,3 @@ class Xhgui_Controller_Run extends Xhgui_Controller
+-        $request = $this->app->request();
+-        $response = $this->app->response();
+-        $profile = $this->searcher->get($request->get('id'));
++        $request = $this->_app->request();
++        $response = $this->_app->response();
++        $profile = $this->_profiles->get($request->get('id'));
+diff --git a/src/Xhgui/Controller/Watch.php b/src/Xhgui/Controller/Watch.php
+index f4d8ae8..83bfdbd 100644
+--- a/src/Xhgui/Controller/Watch.php
++++ b/src/Xhgui/Controller/Watch.php
+@@ -3,2 +2,0 @@
+-use Slim\Slim;
+-
+@@ -7,4 +4,0 @@ class Xhgui_Controller_Watch extends Xhgui_Controller
+-    /**
+-     * @var Xhgui_Searcher_Interface
+-     */
+-    protected $searcher;
+@@ -12 +6,4 @@ class Xhgui_Controller_Watch extends Xhgui_Controller
+-    public function __construct(Slim $app, Xhgui_Searcher_Interface $searcher)
++    protected $_app;
++    protected $_watches;
++
++    public function __construct($app, $watches)
+@@ -14,2 +11,2 @@ class Xhgui_Controller_Watch extends Xhgui_Controller
+-        parent::__construct($app);
+-        $this->searcher = $searcher;
++        $this->_app = $app;
++        $this->_watches = $watches;
+@@ -20 +17 @@ class Xhgui_Controller_Watch extends Xhgui_Controller
+-        $watched = $this->searcher->getAllWatches();
++        $watched = $this->_watches->getAll();
+@@ -27,0 +25,3 @@ class Xhgui_Controller_Watch extends Xhgui_Controller
++        $app = $this->_app;
++        $watches = $this->_watches;
++
+@@ -29 +29 @@ class Xhgui_Controller_Watch extends Xhgui_Controller
+-        $request = $this->app->request();
++        $request = $app->request();
+@@ -32 +32 @@ class Xhgui_Controller_Watch extends Xhgui_Controller
+-            $this->searcher->saveWatch($data);
++            $watches->save($data);
+@@ -35 +35 @@ class Xhgui_Controller_Watch extends Xhgui_Controller
+-            $this->app->flash('success', 'Watch functions updated.');
++            $app->flash('success', 'Watch functions updated.');
+@@ -37 +37 @@ class Xhgui_Controller_Watch extends Xhgui_Controller
+-        $this->app->redirect($this->app->urlFor('watch.list'));
++        $app->redirect($app->urlFor('watch.list'));
+diff --git a/src/Xhgui/Controller/Waterfall.php b/src/Xhgui/Controller/Waterfall.php
+index d45a6a2..795e372 100644
+--- a/src/Xhgui/Controller/Waterfall.php
++++ b/src/Xhgui/Controller/Waterfall.php
+@@ -3,2 +2,0 @@
+-use Slim\Slim;
+-
+@@ -7,4 +5,2 @@ class Xhgui_Controller_Waterfall extends Xhgui_Controller
+-    /**
+-     * @var Xhgui_Searcher_Interface
+-     */
+-    protected $searcher;
++    protected $_app;
++    protected $_profiles;
+@@ -12 +8 @@ class Xhgui_Controller_Waterfall extends Xhgui_Controller
+-    public function __construct(Slim $app, Xhgui_Searcher_Interface $searcher)
++    public function __construct($app, $profiles)
+@@ -14,2 +10,2 @@ class Xhgui_Controller_Waterfall extends Xhgui_Controller
+-        parent::__construct($app);
+-        $this->searcher = $searcher;
++        $this->_app = $app;
++        $this->_profiles = $profiles;
+@@ -20 +16 @@ class Xhgui_Controller_Waterfall extends Xhgui_Controller
+-        $request = $this->app->request();
++        $request = $this->_app->request();
+@@ -22 +18 @@ class Xhgui_Controller_Waterfall extends Xhgui_Controller
+-        $keys = array('remote_addr', 'request_start', 'request_end');
++        $keys = array("remote_addr", 'request_start', 'request_end');
+@@ -28 +24 @@ class Xhgui_Controller_Waterfall extends Xhgui_Controller
+-        $result = $this->searcher->getAll(array(
++        $result = $this->_profiles->getAll(array(
+@@ -53,2 +49,2 @@ class Xhgui_Controller_Waterfall extends Xhgui_Controller
+-        $request = $this->app->request();
+-        $response = $this->app->response();
++        $request = $this->_app->request();
++        $response = $this->_app->response();
+@@ -56 +52 @@ class Xhgui_Controller_Waterfall extends Xhgui_Controller
+-        $keys = array('remote_addr', 'request_start', 'request_end');
++        $keys = array("remote_addr", 'request_start', 'request_end');
+@@ -60 +56 @@ class Xhgui_Controller_Waterfall extends Xhgui_Controller
+-        $result = $this->searcher->getAll(array(
++        $result = $this->_profiles->getAll(array(
+@@ -67 +62,0 @@ class Xhgui_Controller_Waterfall extends Xhgui_Controller
+-        /** @var Xhgui_Profile $r */
+@@ -73 +68 @@ class Xhgui_Controller_Waterfall extends Xhgui_Controller
+-                'id' => $r->getId(),
++                'id' => (string)$r->getId(),
+diff --git a/src/Xhgui/Profile.php b/src/Xhgui/Profile.php
+index 1c0d0f8..ffee60c 100644
+--- a/src/Xhgui/Profile.php
++++ b/src/Xhgui/Profile.php
+@@ -23 +23 @@ class Xhgui_Profile
+-    public function __construct(array $profile, $convert = true)
++    public function __construct($profile, $convert = true)
+@@ -26,6 +25,0 @@ class Xhgui_Profile
+-
+-        // cast MongoIds to string
+-        if (isset($this->_data['_id']) && !is_string($this->_data['_id'])) {
+-            $this->_data['_id'] = (string) $this->_data['_id'];
+-        }
+-
+@@ -408,19 +401,0 @@ class Xhgui_Profile
+-    /**
+-     * @param array $profileData
+-     * @param array $filters
+-     *
+-     * @return array
+-     */
+-    public function filter($profileData, $filters = [])
+-    {
+-        foreach ($filters as $key => $item) {
+-            foreach ($profileData as $keyItem => $method) {
+-                if (fnmatch($item, $keyItem)) {
+-                    unset($profileData[ $keyItem ]);
+-                }
+-            }
+-        }
+-
+-        return $profileData;
+-    }
+-
+@@ -601,0 +577,73 @@ class Xhgui_Profile
++    /**
++     * Return a structured array suitable for generating flamegraph visualizations.
++     *
++     * Functions whose inclusive time is less than 1% of the total time will
++     * be excluded from the callgraph data.
++     *
++     * @return array
++     */
++    public function getFlamegraph($metric = 'wt', $threshold = 0.01)
++    {
++        $valid = array_merge($this->_keys, $this->_exclusiveKeys);
++        if (!in_array($metric, $valid)) {
++            throw new Exception("Unknown metric '$metric'. Cannot generate flamegraph.");
++        }
++        $this->calculateSelf();
++
++        // Non exclusive metrics are always main() because it is the root call scope.
++        if (in_array($metric, $this->_exclusiveKeys)) {
++            $main = $this->_maxValue($metric);
++        } else {
++            $main = $this->_collapsed['main()'][$metric];
++        }
++
++        $this->_visited = $this->_nodes = $this->_links = array();
++        $flamegraph = $this->_flamegraphData(self::NO_PARENT, $main, $metric, $threshold);
++        return array('data' => array_shift($flamegraph), 'sort' => $this->_visited);
++    }
++
++    protected function _flamegraphData($parentName, $main, $metric, $threshold, $parentIndex = null)
++    {
++        $result = array();
++        // Leaves don't have children, and don't have links/nodes to add.
++        if (!isset($this->_indexed[$parentName])) {
++            return $result;
++        }
++
++        $children = $this->_indexed[$parentName];
++        foreach ($children as $childName => $metrics) {
++            $metrics = $this->_collapsed[$childName];
++            if ($metrics[$metric] / $main <= $threshold) {
++                continue;
++            }
++            $current = array(
++                'name' => $childName,
++                'value' => $metrics[$metric],
++            );
++            $revisit = false;
++
++            // Keep track of which nodes we've visited and their position
++            // in the node list.
++            if (!isset($this->_visited[$childName])) {
++                $index = count($this->_nodes);
++                $this->_visited[$childName] = $index;
++                $this->_nodes[] = $current;
++            } else {
++                $revisit = true;
++                $index = $this->_visited[$childName];
++            }
++
++            // If the current function has more children,
++            // walk that call subgraph.
++            if (isset($this->_indexed[$childName]) && !$revisit) {
++                $grandChildren = $this->_flamegraphData($childName, $main, $metric, $threshold, $index);
++                if (!empty($grandChildren)) {
++                    $current['children'] = $grandChildren;
++                }
++            }
++
++            $result[] = $current;
++        }
++        return $result;
++    }
++
+diff --git a/src/Xhgui/Searcher/Mongo.php b/src/Xhgui/Profiles.php
+similarity index 73%
+rename from src/Xhgui/Searcher/Mongo.php
+rename to src/Xhgui/Profiles.php
+index 6a6a3b6..55d1765 100644
+--- a/src/Xhgui/Searcher/Mongo.php
 +++ b/src/Xhgui/Profiles.php
-@@ -8,9 +8,9 @@ class Xhgui_Profiles
- 
-     protected $_mapper;
- 
+@@ -2 +1,0 @@
+-
+@@ -4 +3 @@
+- * A Searcher for a MongoDB backend.
++ * Contains logic for getting/creating/removing profile records.
+@@ -6 +5 @@
+-class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
++class Xhgui_Profiles
+@@ -10,2 +8,0 @@ class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
+-    protected $_watches;
+-
+@@ -14 +11 @@ class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
 -    public function __construct(MongoDb $db)
 +    public function __construct(MongoDb $db, $collection)
-     {
+@@ -16,2 +13 @@ class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
 -        $this->_collection = $db->results;
+-        $this->_watches = $db->watches;
 +        $this->_collection = $db->$collection;
-         $this->_mapper = new Xhgui_Db_Mapper();
-     }
- 
+@@ -22 +18,3 @@ class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
+-     * {@inheritdoc}
++     * Get the latest profile data.
++     *
++     * @return Xhgui_Profile
+@@ -33,4 +31 @@ class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
+-    /**
+-     * {@inheritdoc}
+-     */
+-    public function query($conditions, $limit, $fields = [])
++    public function query($conditions, $fields = null)
+@@ -38,4 +33 @@ class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
+-        $result = $this->_collection->find($conditions, $fields)
+-            ->limit($limit);
+-
+-        return iterator_to_array($result);
++        return $this->_collection->find($conditions, $fields);
+@@ -45 +37,4 @@ class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
+-     * {@inheritdoc}
++     * Get a single profile run by id.
++     *
++     * @param string $id The id of the profile to get.
++     * @return Xhgui_Profile
+@@ -55 +50,6 @@ class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
+-     * {@inheritdoc}
++     * Get the list of profiles for a simplified url.
++     *
++     * @param string $url The url to load profiles for.
++     * @param array $options Pagination options to use.
++     * @param array $conditions The search options.
++     * @return MongoCursor
+@@ -57 +57 @@ class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
+-    public function getForUrl($url, $options, $conditions = [])
++    public function getForUrl($url, $options, $conditions = array())
+@@ -68,0 +69,45 @@ class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
++    public function paginate($options)
++    {
++        $opts = $this->_mapper->convert($options);
++
++        $totalRows = $this->_collection->find(
++            $opts['conditions'],
++            array('_id' => 1))->count();
++
++        $totalPages = max(ceil($totalRows / $opts['perPage']), 1);
++        $page = 1;
++        if (isset($options['page'])) {
++            $page = min(max($options['page'], 1), $totalPages);
++        }
++
++        $projection = false;
++        if (isset($options['projection'])) {
++            if ($options['projection'] === true) {
++                $projection = array('meta' => 1, 'profile.main()' => 1);
++            } else {
++                $projection = $options['projection'];
++            }
++        }
++
++        if ($projection === false) {
++            $cursor = $this->_collection->find($opts['conditions'])
++                ->sort($opts['sort'])
++                ->skip((int)($page - 1) * $opts['perPage'])
++                ->limit($opts['perPage']);
++        } else {
++            $cursor = $this->_collection->find($opts['conditions'], $projection)
++                ->sort($opts['sort'])
++                ->skip((int)($page - 1) * $opts['perPage'])
++                ->limit($opts['perPage']);
++        }
++
++        return array(
++            'results' => $this->_wrap($cursor),
++            'sort' => $opts['sort'],
++            'direction' => $opts['direction'],
++            'page' => $page,
++            'perPage' => $opts['perPage'],
++            'totalPages' => $totalPages
++        );
++    }
++
+@@ -70 +115,9 @@ class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
+-     * {@inheritdoc}
++     * Get the Percentile metrics for a URL
++     *
++     * This will group data by date and returns only the
++     * percentile + date, making the data ideal for time series graphs
++     *
++     * @param integer $percentile The percentile you want. e.g. 90.
++     * @param string $url
++     * @param array $search Search options containing date_start and or date_end
++     * @return array Array of metrics grouped by date
+@@ -72 +125 @@ class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
+-    public function getPercentileForUrl($percentile, $url, $search = [])
++    public function getPercentileForUrl($percentile, $url, $search = array())
+@@ -119,3 +172 @@ class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
+-            ),
+-            array('cursor' => array('batchSize' => 0))
+-        );
++        ));
+@@ -124 +175 @@ class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
+-            return [];
++            return array();
+@@ -146 +197,8 @@ class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
+-     * {@inheritdoc}
++     * Get the Average metrics for a URL
++     *
++     * This will group data by date and returns only the
++     * avg + date, making the data ideal for time series graphs
++     *
++     * @param string $url
++     * @param array $search Search options containing date_start and or date_end
++     * @return array Array of metrics grouped by date
+@@ -148 +206 @@ class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
+-    public function getAvgsForUrl($url, $search = [])
++    public function getAvgsForUrl($url, $search = array())
+@@ -175,3 +233 @@ class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
+-        ),
+-            array('cursor' => array('batchSize' => 0))
+-        );
++        ));
+@@ -179 +235 @@ class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
+-            return [];
++            return array();
+@@ -189 +245,4 @@ class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
+-     * {@inheritdoc}
++     * Get a paginated set of results.
++     *
++     * @param array $options The find options to use.
++     * @return array An array of result data.
+@@ -191 +250 @@ class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
+-    public function getAll($options = [])
++    public function getAll($options = array())
+@@ -197 +256,5 @@ class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
+-     * {@inheritdoc}
++     * Insert a profile run.
++     *
++     * Does unchecked inserts.
++     *
++     * @param array $profile The profile data to save.
+@@ -199 +262 @@ class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
+-    public function delete($id)
++    public function insert($profile)
+@@ -201 +264 @@ class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
+-        $this->_collection->remove(array('_id' => new MongoId($id)), []);
++        return $this->_collection->insert($profile, array('w' => 0));
+@@ -205 +268,5 @@ class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
+-     * {@inheritdoc}
++     * Used to truncate a collection.
++     *
++     * Primarly used in test cases to reset the test db.
++     *
++     * @return boolean
+@@ -212,99 +278,0 @@ class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
+-    /**
+-     * {@inheritdoc}
+-     */
+-    public function saveWatch(array $data)
+-    {
+-        if (empty($data['name'])) {
+-            return false;
+-        }
+-
+-        if (!empty($data['removed']) && isset($data['_id'])) {
+-            $this->_watches->remove(
+-                array('_id' => new MongoId($data['_id'])),
+-                array('w' => 1)
+-            );
+-            return true;
+-        }
+-
+-        if (empty($data['_id'])) {
+-            $this->_watches->insert(
+-                $data,
+-                array('w' => 1)
+-            );
+-            return true;
+-        }
+-
+-        $data['_id'] = new MongoId($data['_id']);
+-        $this->_watches->update(
+-            array('_id' => $data['_id']),
+-            $data,
+-            array('w' => 1)
+-        );
+-        return true;
+-    }
+-
+-    /**
+-     * {@inheritdoc}
+-     */
+-    public function getAllWatches()
+-    {
+-        $cursor = $this->_watches->find();
+-        return array_values(iterator_to_array($cursor));
+-    }
+-
+-    /**
+-     * {@inheritdoc}
+-     */
+-    public function truncateWatches()
+-    {
+-        $this->_watches->drop();
+-    }
+-
+-    /**
+-     * {@inheritdoc}
+-     */
+-    private function paginate($options)
+-    {
+-        $opts = $this->_mapper->convert($options);
+-
+-        $totalRows = $this->_collection->find(
+-            $opts['conditions'],
+-            array('_id' => 1))->count();
+-
+-        $totalPages = max(ceil($totalRows / $opts['perPage']), 1);
+-        $page = 1;
+-        if (isset($options['page'])) {
+-            $page = min(max($options['page'], 1), $totalPages);
+-        }
+-
+-        $projection = false;
+-        if (isset($options['projection'])) {
+-            if ($options['projection'] === true) {
+-                $projection = array('meta' => 1, 'profile.main()' => 1);
+-            } else {
+-                $projection = $options['projection'];
+-            }
+-        }
+-
+-        if ($projection === false) {
+-            $cursor = $this->_collection->find($opts['conditions'])
+-                ->sort($opts['sort'])
+-                ->skip((int)($page - 1) * $opts['perPage'])
+-                ->limit($opts['perPage']);
+-        } else {
+-            $cursor = $this->_collection->find($opts['conditions'], $projection)
+-                ->sort($opts['sort'])
+-                ->skip((int)($page - 1) * $opts['perPage'])
+-                ->limit($opts['perPage']);
+-        }
+-
+-        return array(
+-            'results' => $this->_wrap($cursor),
+-            'sort' => $opts['sort'],
+-            'direction' => $opts['direction'],
+-            'page' => $page,
+-            'perPage' => $opts['perPage'],
+-            'totalPages' => $totalPages
+-        );
+-    }
+-
+@@ -315 +283 @@ class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
+-     * @return Xhgui_Profile|Xhgui_Profile[] The transformed/wrapped results.
++     * @return Xhgui_Profile|array The transformed/wrapped results.
+@@ -317 +285 @@ class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
+-    private function _wrap($data)
++    protected function _wrap($data)
+@@ -326 +294 @@ class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
+-        $results = [];
++        $results = array();
 diff --git a/src/Xhgui/Saver.php b/src/Xhgui/Saver.php
-index 86b6a98..429fc46 100644
---- a/src/Xhgui/Saver.php
+new file mode 100644
+index 0000000..429fc46
+--- /dev/null
 +++ b/src/Xhgui/Saver.php
-@@ -21,7 +21,8 @@ class Xhgui_Saver
-             case 'mongodb':
-             default:
-                 $mongo = new MongoClient($config['db.host'], $config['db.options']);
--                $mongo->{$config['db.db']}->results->findOne();
+@@ -0,0 +1,30 @@
++<?php
++/**
++ * A small factory to handle creation of the profile saver instance.
++ *
++ * This class only exists to handle cases where an incompatible version of pimple
++ * exists in the host application.
++ */
++class Xhgui_Saver
++{
++    /**
++     * Get a saver instance based on configuration data.
++     *
++     * @param array $config The configuration data.
++     * @return Xhgui_Saver_File|Xhgui_Saver_Mongo
++     */
++    public static function factory($config)
++    {
++        switch ($config['save.handler']) {
++            case 'file':
++                return new Xhgui_Saver_File($config['save.handler.filename']);
++            case 'mongodb':
++            default:
++                $mongo = new MongoClient($config['db.host'], $config['db.options']);
 +                $coll = $config['db.collection'];
 +                $mongo->{$config['db.db']}->$coll->findOne();
-                 $profiles = new Xhgui_Profiles($mongo->{$config['db.db']});
-                 return new Xhgui_Saver_Mongo($profiles);
-         }
++                $profiles = new Xhgui_Profiles($mongo->{$config['db.db']});
++                return new Xhgui_Saver_Mongo($profiles);
++        }
++    }
++}
+diff --git a/src/Xhgui/Saver/File.php b/src/Xhgui/Saver/File.php
+new file mode 100644
+index 0000000..e633053
+--- /dev/null
++++ b/src/Xhgui/Saver/File.php
+@@ -0,0 +1,17 @@
++<?php
++
++class Xhgui_Saver_File implements Xhgui_Saver_Interface
++{
++    protected $_file;
++
++    public function __construct($file) 
++    {
++        $this->_file = $file;
++    }
++    
++    public function save($data)
++    {
++        $json = json_encode($data);
++        return file_put_contents($this->_file, $json.PHP_EOL, FILE_APPEND);
++    }
++}
+diff --git a/src/Xhgui/Saver/Interface.php b/src/Xhgui/Saver/Interface.php
+new file mode 100644
+index 0000000..d3761d2
+--- /dev/null
++++ b/src/Xhgui/Saver/Interface.php
+@@ -0,0 +1,6 @@
++<?php
++
++interface Xhgui_Saver_Interface
++{
++    public function save($data);
++}
+diff --git a/src/Xhgui/Saver/Mongo.php b/src/Xhgui/Saver/Mongo.php
+new file mode 100644
+index 0000000..032be2f
+--- /dev/null
++++ b/src/Xhgui/Saver/Mongo.php
+@@ -0,0 +1,16 @@
++<?php
++
++class Xhgui_Saver_Mongo implements Xhgui_Saver_Interface
++{
++    protected $_profiles;
++    
++    public function __construct(Xhgui_Profiles $profiles) 
++    {
++        $this->_profiles = $profiles;
++    }
++    
++    public function save($data)
++    {
++        return $this->_profiles->insert($data);
++    }
++}
+diff --git a/src/Xhgui/Searcher/Interface.php b/src/Xhgui/Searcher/Interface.php
+deleted file mode 100644
+index f08ee06..0000000
+--- a/src/Xhgui/Searcher/Interface.php
++++ /dev/null
+@@ -1,127 +0,0 @@
+-<?php
+-
+-/**
+- * Contract for classes that search and retrieve XHProf profiles.
+- */
+-interface Xhgui_Searcher_Interface
+-{
+-    /**
+-     * Get the latest profile data.
+-     *
+-     * @return Xhgui_Profile
+-     *
+-     * @throws Exception When there is not even a single profile available.
+-     */
+-    public function latest();
+-
+-    /**
+-     * Run a custom query and return the result as an array.
+-     *
+-     * @param array      $conditions
+-     * @param array|null $fields
+-     * @param int        $limit
+-     *
+-     * @return array
+-     */
+-    public function query($conditions, $limit, $fields = []);
+-
+-    /**
+-     * Get a single profile run by id.
+-     *
+-     * @param string $id The id of the profile to get.
+-     * @return Xhgui_Profile
+-     *
+-     * @throws Exception When a profile with the given $id is not found.
+-     */
+-    public function get($id);
+-
+-    /**
+-     * Get the list of profiles for a simplified url.
+-     *
+-     * @param string $url The url to load profiles for.
+-     * @param array $options Pagination options to use.
+-     * @param array $conditions The search options.
+-     * @return MongoCursor
+-     */
+-    public function getForUrl($url, $options, $conditions = array());
+-
+-    /**
+-     * Get the Percentile metrics for a URL
+-     *
+-     * This will group data by date and returns only the
+-     * percentile + date, making the data ideal for time series graphs
+-     *
+-     * @param integer $percentile The percentile you want. e.g. 90.
+-     * @param string $url
+-     * @param array $search Search options containing date_start and or date_end
+-     * @return array Array of metrics grouped by date
+-     */
+-    public function getPercentileForUrl($percentile, $url, $search = array());
+-
+-    /**
+-     * Get the Average metrics for a URL
+-     *
+-     * This will group data by date and returns only the
+-     * avg + date, making the data ideal for time series graphs
+-     *
+-     * @param string $url
+-     * @param array $search Search options containing date_start and or date_end
+-     * @return array Array of metrics grouped by date
+-     */
+-    public function getAvgsForUrl($url, $search = array());
+-
+-    /**
+-     * Get a paginated set of results.
+-     *
+-     * @param array $options The find options to use.
+-     * @return array An array of result data with the following keys:
+-     *  - results:    an array of Xhgui_Profile objects
+-     *  - sort:       an array of search criteria (TODO meta.SERVER.REQUEST_TIME => -1 ????)
+-     *  - direction:  an string, either 'desc' or 'asc'
+-     *  - page:       an integer, the page to display (e.g. 3)
+-     *  - perPage:    an integer, how many profiles to display per page (e.g. 25)
+-     *  - totalPages: an integer, total number of pages (e.g. 10)
+-     */
+-    public function getAll($options = array());
+-
+-    /**
+-     * Delete a profile run.
+-     *
+-     * @param string $id The profile id to delete.
+-     */
+-    public function delete($id);
+-
+-    /**
+-     * Used to truncate a collection.
+-     *
+-     * Primarily used in test cases to reset the test db.
+-     *
+-     * @return boolean
+-     */
+-    public function truncate();
+-
+-    /**
+-     * Save a value to the collection.
+-     *
+-     * Will do an insert or update depending
+-     * on the id field being present.
+-     *
+-     * @param array $data The data to save.
+-     * @return boolean
+-     */
+-    public function saveWatch(array $data);
+-
+-    /**
+-     * Get all the known watch functions.
+-     *
+-     * @return array Array of watch functions.
+-     */
+-    public function getAllWatches();
+-
+-    /**
+-     * Truncate the watch collection.
+-     *
+-     * @return void
+-     */
+-    public function truncateWatches();
+-}
+diff --git a/src/Xhgui/Searcher/Pdo.php b/src/Xhgui/Searcher/Pdo.php
+deleted file mode 100644
+index 07bebce..0000000
+--- a/src/Xhgui/Searcher/Pdo.php
++++ /dev/null
+@@ -1,253 +0,0 @@
+-<?php
+-
+-class Xhgui_Searcher_Pdo implements Xhgui_Searcher_Interface
+-{
+-    /**
+-     * @var PDO
+-     */
+-    private $pdo;
+-
+-    /**
+-     * @var string
+-     */
+-    private $table;
+-
+-    /**
+-     * @param PDO    $pdo   An open database connection
+-     * @param string $table Table name where Xhgui profiles are stored
+-     */
+-    public function __construct(PDO $pdo, $table)
+-    {
+-        $this->pdo = $pdo;
+-        $this->table = $table;
+-    }
+-
+-    /**
+-     * {@inheritdoc}
+-     */
+-    public function latest()
+-    {
+-        $stmt = $this->pdo->query("
+-          SELECT
+-            id,
+-            profile,
+-            url,
+-            SERVER,
+-            GET,
+-            ENV,
+-            simple_url,
+-            request_ts,
+-            request_ts_micro,
+-            request_date
+-          FROM {$this->table}
+-          ORDER BY request_date ASC
+-          LIMIT 1
+-        ");
+-
+-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+-        if (false === $row) {
+-            throw new Exception('No profile available yet.');
+-        }
+-
+-        return new Xhgui_Profile([
+-            '_id' => $row['id'],
+-            'meta' => [
+-                'url' => $row['url'],
+-                'SERVER' => json_decode($row['SERVER'], true),
+-                'get' => json_decode($row['GET'], true),
+-                'env' => json_decode($row['ENV'], true),
+-                'simple_url' => $row['simple_url'],
+-                'request_ts' => (int) $row['request_ts'],
+-                'request_ts_micro' => $row['request_ts_micro'],
+-                'request_date' => $row['request_date'],
+-            ],
+-            'profile' => json_decode($row['profile'], true)
+-        ]);
+-    }
+-
+-    /**
+-     * {@inheritdoc}
+-     */
+-    public function query($conditions, $limit, $fields = [])
+-    {
+-        // TODO: Implement query() method.
+-    }
+-
+-    /**
+-     * {@inheritdoc}
+-     */
+-    public function get($id)
+-    {
+-        $stmt = $this->pdo->prepare("
+-          SELECT
+-            profile,
+-            url,
+-            SERVER,
+-            GET,
+-            ENV,
+-            simple_url,
+-            request_ts,
+-            request_ts_micro,
+-            request_date
+-          FROM {$this->table}
+-          WHERE id = :id
+-        ");
+-
+-        $stmt->execute(['id' => $id]);
+-
+-        if (false === $row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+-            throw new Exception('No profile data found.');
+-        }
+-
+-        return new Xhgui_Profile([
+-            '_id' => $id,
+-            'meta' => [
+-                'url' => $row['url'],
+-                'SERVER' => json_decode($row['SERVER'], true),
+-                'get' => json_decode($row['GET'], true),
+-                'env' => json_decode($row['ENV'], true),
+-                'simple_url' => $row['simple_url'],
+-                'request_ts' => (int) $row['request_ts'],
+-                'request_ts_micro' => $row['request_ts_micro'],
+-                'request_date' => $row['request_date'],
+-            ],
+-            'profile' => json_decode($row['profile'], true)
+-        ]);
+-    }
+-
+-    /**
+-     * {@inheritdoc}
+-     */
+-    public function getForUrl($url, $options, $conditions = array())
+-    {
+-        // TODO: Implement getForUrl() method.
+-    }
+-
+-    /**
+-     * {@inheritdoc}
+-     */
+-    public function getPercentileForUrl($percentile, $url, $search = array())
+-    {
+-        // TODO: Implement getPercentileForUrl() method.
+-    }
+-
+-    /**
+-     * {@inheritdoc}
+-     */
+-    public function getAvgsForUrl($url, $search = array())
+-    {
+-        // TODO: Implement getAvgsForUrl() method.
+-    }
+-
+-    /**
+-     * {@inheritdoc}
+-     */
+-    public function getAll($options = array())
+-    {
+-        $sort = $options['sort'];
+-        $direction = $options['direction'];
+-        $page = $options['page'];
+-        $perPage = $options['perPage'];
+-
+-        $stmt = $this->pdo->query("
+-          SELECT
+-            id,
+-            url,
+-            SERVER,
+-            GET,
+-            ENV,
+-            simple_url,
+-            request_ts,
+-            request_ts_micro,
+-            request_date,
+-            main_wt,
+-            main_ct,
+-            main_cpu, 
+-            main_mu,
+-            main_pmu
+-          FROM {$this->table}
+-          ORDER BY request_ts DESC
+-        ", PDO::FETCH_ASSOC);
+-
+-        $results = [];
+-        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+-            $results[] = new Xhgui_Profile([
+-                '_id' => $row['id'],
+-                'meta' => [
+-                    'url' => $row['url'],
+-                    'SERVER' => json_decode($row['SERVER'], true),
+-                    'get' => json_decode($row['GET'], true),
+-                    'env' => json_decode($row['ENV'], true),
+-                    'simple_url' => $row['simple_url'],
+-                    'request_ts' => $row['request_ts'],
+-                    'request_ts_micro' => $row['request_ts_micro'],
+-                    'request_date' => $row['request_date'],
+-                ],
+-                'profile' => [
+-                    'main()' => [
+-                        'wt' => (int) $row['main_wt'],
+-                        'ct' => (int) $row['main_ct'],
+-                        'cpu' => (int) $row['main_cpu'],
+-                        'mu' => (int) $row['main_mu'],
+-                        'pmu' => (int) $row['main_pmu'],
+-                    ]
+-                ]
+-            ]);
+-        }
+-
+-        return array(
+-            'results' => $results,
+-            'sort' => 'meta.request_ts',
+-            'direction' => 'desc',
+-            'page' => 1,
+-            'perPage' => count($results),
+-            'totalPages' => 1
+-        );
+-    }
+-
+-    /**
+-     * {@inheritdoc}
+-     */
+-    public function delete($id)
+-    {
+-        $stmt = $this->pdo->prepare("
+-          DELETE FROM {$this->table}
+-          WHERE id = :id
+-        ");
+-
+-        $stmt->execute(['id' => $id]);
+-    }
+-
+-    /**
+-     * {@inheritdoc}
+-     */
+-    public function truncate()
+-    {
+-        return is_int(
+-            $this->pdo->exec("DELETE FROM {$this->table}")
+-        );
+-    }
+-
+-    /**
+-     * {@inheritdoc}
+-     */
+-    public function saveWatch(array $data)
+-    {
+-        return true;
+-    }
+-
+-    /**
+-     * {@inheritdoc}
+-     */
+-    public function getAllWatches()
+-    {
+-        return [];
+-    }
+-
+-    /**
+-     * {@inheritdoc}
+-     */
+-    public function truncateWatches()
+-    {
+-    }
+-}
 diff --git a/src/Xhgui/ServiceContainer.php b/src/Xhgui/ServiceContainer.php
-index 072606f..1171467 100644
+index a71f962..305190a 100644
 --- a/src/Xhgui/ServiceContainer.php
 +++ b/src/Xhgui/ServiceContainer.php
-@@ -74,8 +74,9 @@ class Xhgui_ServiceContainer extends Pimple
-             if (empty($config['db.options'])) {
-                 $config['db.options'] = array();
-             }
+@@ -4 +3,0 @@ use Slim\Views\Twig;
+-use Slim\Middleware\SessionCookie;
+@@ -19,0 +19 @@ class Xhgui_ServiceContainer extends Pimple
++        $this['config'] = Xhgui_Config::all();
+@@ -34 +33,0 @@ class Xhgui_ServiceContainer extends Pimple
+-            $view->twigTemplateDirs = array(dirname(__DIR__) . '/templates');
+@@ -49,5 +47,0 @@ class Xhgui_ServiceContainer extends Pimple
+-            // Enable cookie based sessions
+-            $app->add(new SessionCookie(array(
+-                'httponly' => true,
+-            )));
+-
+@@ -72,2 +65,0 @@ class Xhgui_ServiceContainer extends Pimple
+-        $this['config'] = Xhgui_Config::all();
+-
+@@ -78,0 +71 @@ class Xhgui_ServiceContainer extends Pimple
 +            $coll = $config['db.collection'];
-             $mongo = new MongoClient($config['db.host'], $config['db.options']);
+@@ -80 +73 @@ class Xhgui_ServiceContainer extends Pimple
 -            $mongo->{$config['db.db']}->results->findOne();
 +            $mongo->{$config['db.db']}->$coll->findOne();
- 
-             return $mongo->{$config['db.db']};
-         });
-@@ -85,7 +86,7 @@ class Xhgui_ServiceContainer extends Pimple
-         };
- 
-         $this['profiles'] = function ($c) {
--            return new Xhgui_Profiles($c['db']);
+@@ -85,10 +78,2 @@ class Xhgui_ServiceContainer extends Pimple
+-        $this['pdo'] = $this->share(function ($c) {
+-            return new PDO(
+-                $c['config']['pdo']['dsn'],
+-                $c['config']['pdo']['pass'],
+-                $c['config']['pdo']['user']
+-            );
+-        });
+-
+-        $this['searcher.mongo'] = function ($c) {
+-            return new Xhgui_Searcher_Mongo($c['db']);
++        $this['watchFunctions'] = function ($c) {
++            return new Xhgui_WatchFunctions($c['db']);
+@@ -97,2 +82,2 @@ class Xhgui_ServiceContainer extends Pimple
+-        $this['searcher.pdo'] = function ($c) {
+-            return new Xhgui_Searcher_Pdo($c['pdo'], $c['config']['pdo']['table']);
++        $this['profiles'] = function ($c) {
 +            return new Xhgui_Profiles($c['db'], $c['config']['db.collection']);
-         };
- 
-         $this['saver'] = function($c) {
+@@ -101 +86 @@ class Xhgui_ServiceContainer extends Pimple
+-        $this['searcher'] = function ($c) {
++        $this['saver'] = function($c) {
+@@ -103 +87,0 @@ class Xhgui_ServiceContainer extends Pimple
+-
+@@ -105,3 +89,2 @@ class Xhgui_ServiceContainer extends Pimple
+-                case 'pdo':
+-                    return $c['searcher.pdo'];
+-
++                case 'file':
++                    return new Xhgui_Saver_File($config['save.handler.filename']);
+@@ -110 +93 @@ class Xhgui_ServiceContainer extends Pimple
+-                    return $c['searcher.mongo'];
++                    return $c['saverMongo'];
+@@ -114,9 +97,2 @@ class Xhgui_ServiceContainer extends Pimple
+-        $this['saver.mongo'] = function ($c) {
+-            $config = $c['config'];
+-            $config['save.handler'] = 'mongodb';
+-
+-            return Xhgui_Saver::factory($config);
+-        };
+-
+-        $this['saver'] = function ($c) {
+-            return Xhgui_Saver::factory($c['config']);
++        $this['saverMongo'] = function($c) {
++            return new Xhgui_Saver_Mongo($c['profiles']);
+@@ -132 +108 @@ class Xhgui_ServiceContainer extends Pimple
+-            return new Xhgui_Controller_Watch($c['app'], $c['searcher']);
++            return new Xhgui_Controller_Watch($c['app'], $c['watchFunctions']);
+@@ -136 +112 @@ class Xhgui_ServiceContainer extends Pimple
+-            return new Xhgui_Controller_Run($c['app'], $c['searcher']);
++            return new Xhgui_Controller_Run($c['app'], $c['profiles'], $c['watchFunctions']);
+@@ -140 +116 @@ class Xhgui_ServiceContainer extends Pimple
+-            return new Xhgui_Controller_Custom($c['app'], $c['searcher']);
++            return new Xhgui_Controller_Custom($c['app'], $c['profiles']);
+@@ -144,5 +120 @@ class Xhgui_ServiceContainer extends Pimple
+-            return new Xhgui_Controller_Waterfall($c['app'], $c['searcher']);
+-        };
+-
+-        $this['importController'] = function ($c) {
+-            return new Xhgui_Controller_Import($c['app'], $c['saver']);
++            return new Xhgui_Controller_Waterfall($c['app'], $c['profiles']);
+diff --git a/src/Xhgui/Util.php b/src/Xhgui/Util.php
+new file mode 100644
+index 0000000..5c35648
+--- /dev/null
++++ b/src/Xhgui/Util.php
+@@ -0,0 +1,23 @@
++<?php
++
++class Xhgui_Util
++{
++    /**
++     * Creates a simplified URL given a standard URL.
++     * Does the following transformations:
++     *
++     * - Remove numeric values after =.
++     *
++     * @param string $url
++     * @return string
++     */
++    public static function simpleUrl($url)
++    {
++        $callable = Xhgui_Config::read('profiler.simple_url');
++        if (is_callable($callable)) {
++            return call_user_func($callable, $url);
++        }
++        return preg_replace('/\=\d+/', '', $url);
++    }
++
++}
+diff --git a/src/Xhgui/WatchFunctions.php b/src/Xhgui/WatchFunctions.php
+new file mode 100644
+index 0000000..05c3c29
+--- /dev/null
++++ b/src/Xhgui/WatchFunctions.php
+@@ -0,0 +1,73 @@
++<?php
++class Xhgui_WatchFunctions
++{
++    protected $_collection;
++
++    public function __construct(MongoDb $db)
++    {
++        $this->_collection = $db->watches;
++    }
++
++    /**
++     * Save a value to the collection.
++     *
++     * Will do an insert or update depending
++     * on the id field being present.
++     *
++     * @param array $data The data to save.
++     * @return boolean
++     */
++    public function save($data)
++    {
++        if (empty($data['name'])) {
++            return false;
++        }
++
++        if (!empty($data['removed']) && isset($data['_id'])) {
++            $this->_collection->remove(
++                array('_id' => new MongoId($data['_id'])),
++                array('w' => 1)
++            );
++            return true;
++        }
++
++        if (empty($data['_id'])) {
++            $this->_collection->insert(
++                $data,
++                array('w' => 1)
++            );
++            return true;
++        }
++
++
++        $data['_id'] = new MongoId($data['_id']);
++        $this->_collection->update(
++            array('_id' => $data['_id']),
++            $data,
++            array('w' => 1)
++        );
++        return true;
++    }
++
++    /**
++     * Get all the known watch functions.
++     *
++     * @return array Array of watch functions.
++     */
++    public function getAll()
++    {
++        $cursor = $this->_collection->find();
++        return array_values(iterator_to_array($cursor));
++    }
++
++    /**
++     * Truncate the watch collection.
++     *
++     * @return void
++     */
++    public function truncate()
++    {
++        $this->_collection->drop();
++    }
++
++}
+diff --git a/src/routes.php b/src/routes.php
+index 6c37abd..c3a1d01 100644
+--- a/src/routes.php
++++ b/src/routes.php
+@@ -33,18 +32,0 @@ $app->get('/run/view', function () use ($di, $app) {
+-$app->get('/run/delete', function () use ($di, $app) {
+-    $app->controller = $di['runController'];
+-    $app->controller->deleteForm();
+-})->name('run.delete.form');
+-
+-$app->post('/run/delete', function () use ($di, $app) {
+-    $di['runController']->deleteSubmit();
+-})->name('run.delete.submit');
+-
+-$app->get('/run/delete_all', function () use ($di, $app) {
+-    $app->controller = $di['runController'];
+-    $app->controller->deleteAllForm();
+-})->name('run.deleteAll.form');
+-
+-$app->post('/run/delete_all', function () use ($di, $app) {
+-    $di['runController']->deleteAllSubmit();
+-})->name('run.deleteAll.submit');
+-
+@@ -79,0 +62,9 @@ $app->get('/run/callgraph/data', function () use ($di, $app) {
++$app->get('/run/flamegraph', function () use ($di, $app) {
++    $app->controller = $di['runController'];
++    $app->controller->flamegraph();
++})->name('run.flamegraph');
++
++$app->get('/run/flamegraph/data', function () use ($di, $app) {
++    $di['runController']->flamegraphData();
++})->name('run.flamegraph.data');
++
+@@ -84,7 +74,0 @@ $app->get('/run/callgraph/dot', function () use ($di, $app) {
+-// Import route
+-$app->post('/run/import', function () use ($di, $app) {
+-    $app->controller = $di['importController'];
+-    $app->controller->import();
+-})->name('run.import');
+-
+-
+diff --git a/src/templates/runs/delete-all-form.twig b/src/templates/runs/delete-all-form.twig
+deleted file mode 100644
+index 95cd067..0000000
+--- a/src/templates/runs/delete-all-form.twig
++++ /dev/null
+@@ -1,18 +0,0 @@
+-{% extends 'layout/base.twig' %}
+-{% import 'macros/helpers.twig' as helpers %}
+-
+-{% block title %}
+-    - Delete all runs
+-{% endblock %}
+-
+-{% block content %}
+-<h1>Delete all runs</h1>
+-
+-<form class="form-stacked" action="{{ url('run.deleteAll.submit') }}" method="post">
+-    <div class="hero-unit">
+-        <p>Are you sure you want to delete all runs?</p>
+-        <input class="btn btn-large btn-danger" type="submit" value="Delete all" />
+-    </div>
+-</form>
+-
+-{% endblock %}
+diff --git a/src/templates/runs/delete-form.twig b/src/templates/runs/delete-form.twig
+deleted file mode 100644
+index edd6be9..0000000
+--- a/src/templates/runs/delete-form.twig
++++ /dev/null
+@@ -1,35 +0,0 @@
+-{% extends 'layout/base.twig' %}
+-
+-{% block title %}
+-    - Delete a run
+-{% endblock %}
+-
+-{% block content %}
+-<h1>Delete a run</h1>
+-
+-<form class="form-stacked" action="{{ url('run.delete.submit') }}" method="post">
+-    <p>Are you sure you want to delete <a href="{{ url('run.view', {'id': result.id|trim }) }}">run {{ result.id }}</a>?</p>
+-    <table class="table table-hover">
+-        <tr>
+-            <th class="span2">Method</th>
+-            <td>{{result.meta('SERVER.REQUEST_METHOD')}}</td>
+-        </tr>
+-        <tr>
+-            <th class="span2">URL</th>
+-            <td>
+-                {% set addr = result.meta('SERVER.SERVER_NAME') ~ result.meta.url %}
+-                {{ addr }}
+-            </td>
+-        </tr>
+-        <tr>
+-            <th class="span2">Time</th>
+-            <td>{{ result.date|date(date_format) }}</td>
+-        </tr>
+-    </table>
+-    <div class="form-actions">
+-        <input type="hidden" name="id" value="{{ run_id }}" />
+-        <input class="btn btn-large btn-danger" type="submit" value="Delete run" />
+-    </div>
+-</form>
+-
+-{% endblock %}
+diff --git a/src/templates/runs/flamegraph.twig b/src/templates/runs/flamegraph.twig
+new file mode 100644
+index 0000000..d3c3171
+--- /dev/null
++++ b/src/templates/runs/flamegraph.twig
+@@ -0,0 +1,120 @@
++{% extends 'layout/base.twig' %}
++
++{% block head %}
++<link href="{{ static('css/d3.flameGraph.css') }}" rel="stylesheet" media="screen">
++{% endblock %}
++
++{% block title %}
++- Flamegraph - {{ profile.meta.url }} - {{ profile.meta('SERVER.REQUEST_TIME')|date(date_format) }}
++{% endblock %}
++
++{% block content %}
++<div class="row-fluid">
++    <a class="back-link" href="{{ url('run.view', {'id': profile.id|trim}) }}">&laquo; Back to run</a>
++    <h1>Flamegraph for {{ profile.meta.url }}</h1>
++    <h4>{{ profile.meta('SERVER.REQUEST_TIME')|date(date_format) }}</h4>
++</div>
++
++<div class="row-fluid">
++<form class="search-form form-inline" id="form">
++	<div class="control-group span8">
++		<a class="btn" id="flamegraph-reset">Reset zoom</a>
++	</div>
++	<div class="control-group span4">
++		<input type="text" class="form-control" id="term">
++		<button class="btn btn-primary" id="flamegraph-search">Search</button>
++		<button class="btn" id="flamegraph-clear">Clear</button>
++	</div>
++</form>
++</div>
++
++<div class="row-fluid">
++    <div id="chart"></div>
++</div>
++
++<div class="alert alert-info">
++    Flamegraphs help visualize where long running methods are, as well as methods
++    that have deep call stacks.
++</div>
++{% endblock %}
++
++
++{% block jsfoot %}
++<script src="{{ static('js/d3.js') }}"></script>
++<script src="{{ static('js/d3-tip-index.js') }}"></script>
++<script src="{{ static('js/d3.flameGraph.js') }}"></script>
++<script type="text/javascript">
++
++var width = parseInt($('#chart').css('width'), 10);
++var cellHeight = 18;
++
++var flameGraph = d3.flameGraph()
++    .height(540)
++    .width(width)
++    .cellHeight(cellHeight)
++    .transitionDuration(750)
++    .transitionEase('cubic-in-out')
++    .sort(true);
++
++var tip = d3.tip()
++    .direction("s")
++    .offset([8, 0])
++    .attr('class', 'd3-flame-graph-tip')
++    .html(function(d) {
++        var units = 'µs';
++        return d.name + " &mdash; " + Xhgui.formatNumber(d.value) + units + ' (' + Math.round(100 * d.dx, 3) + '%)';
++    });
++
++flameGraph.tooltip(tip);
++
++d3.json("{{ url('run.flamegraph.data', {id: profile.id|trim }) }}", function(error, data) {
++    if (error) {
++        return console.warn(error);
++    }
++
++    flameGraph.height(getDepth(data.data) * cellHeight);
++
++    flameGraph.sort(function (a, b) {
++        return data.sort[a.name] - data.sort[b.name];
++    });
++
++    d3.select("#chart")
++        .datum(data.data)
++        .call(flameGraph);
++});
++
++$(document).ready(function(){
++    $("form").submit(function(event){
++        event.preventDefault();
++        search();
++    });
++});
++
++$('#flamegraph-search').on('click', function () {
++    flameGraph.search($("#term").val());
++});
++
++$('#flamegraph-clear').on('click', function() {
++    $('#term').val('');
++    flameGraph.clear();
++});
++
++$('#flamegraph-reset').on('click', function () {
++    flameGraph.resetZoom();
++});
++
++function getDepth (obj) {
++    var depth = 0;
++    if (obj.children) {
++        obj.children.forEach(function (d) {
++            var tmpDepth = getDepth(d)
++            if (tmpDepth > depth) {
++                depth = tmpDepth
++            }
++        })
++    }
++    return 1 + depth
++}
++
++</script>
++{% endblock %}
+diff --git a/src/templates/runs/list.twig b/src/templates/runs/list.twig
+index 47c4f74..2dc85a1 100644
+--- a/src/templates/runs/list.twig
++++ b/src/templates/runs/list.twig
+@@ -13,4 +12,0 @@
+-    <a href="{{ url('run.deleteAll.form') }}" class="pull-right btn btn-small delete-all" title="Delete all">
+-        <i class="icon-trash"></i> Delete all
+-    </a>
+-
+diff --git a/src/templates/runs/paginated-list.twig b/src/templates/runs/paginated-list.twig
+index 17a69ba..06adfa8 100644
+--- a/src/templates/runs/paginated-list.twig
++++ b/src/templates/runs/paginated-list.twig
+@@ -37,3 +36,0 @@
+-                <th>
+-                    Ops
+-                </th>
+@@ -58 +55 @@
+-                {% set addr = result.meta('SERVER.SERVER_NAME') ~ result.meta.url %}
++                {% set addr = result.meta.url %}
+@@ -69,3 +65,0 @@
+-              </a> 
+-              <a href="{{ url('run.view', {'id': result.id|trim, 'filter': true }) }}">
+-                [filter]
+@@ -78,5 +71,0 @@
+-            <td>
+-                <a href="{{ url('run.delete.form', {'id': result.id|trim }) }}">
+-                    <i class="icon-trash"></i>
+-                </a>
+-            </td>
+diff --git a/src/templates/runs/view.twig b/src/templates/runs/view.twig
+index cc3d744..86adf8b 100644
+--- a/src/templates/runs/view.twig
++++ b/src/templates/runs/view.twig
+@@ -43,0 +44,3 @@
++        <a href="{{ url('run.flamegraph', {id: result.id|trim }) }}" class="btn back-link">
++            View Flamegraph
++        </a>
+diff --git a/tests/ConfigTest.php b/tests/ConfigTest.php
+index 8ad4af5..0eadd91 100644
+--- a/tests/ConfigTest.php
++++ b/tests/ConfigTest.php
+@@ -3 +3 @@
+-class ConfigTest extends PHPUnit\Framework\TestCase
++class ConfigTest extends PHPUnit_Framework_TestCase
+diff --git a/tests/Controller/ImportTest.php b/tests/Controller/ImportTest.php
+deleted file mode 100644
+index 89956d8..0000000
+--- a/tests/Controller/ImportTest.php
++++ /dev/null
+@@ -1,68 +0,0 @@
+-<?php
+-use Slim\Environment;
+-
+-class Controller_ImportTest extends PHPUnit\Framework\TestCase
+-{
+-    public function setUp()
+-    {
+-        parent::setUp();
+-        Environment::mock(array(
+-            'SCRIPT_NAME' => 'index.php',
+-            'PATH_INFO' => '/'
+-        ));
+-
+-        $di = Xhgui_ServiceContainer::instance();
+-        $mock = $this->getMockBuilder('Slim\Slim')
+-            ->setMethods(array('redirect', 'render', 'urlFor'))
+-            ->setConstructorArgs(array($di['config']))
+-            ->getMock();
+-
+-        $di['app'] = $di->share(function ($c) use ($mock) {
+-            return $mock;
+-        });
+-        $this->import = $di['importController'];
+-        $this->app = $di['app'];
+-
+-        $this->profiles = $di['searcher.mongo'];
+-        $this->profiles->truncate();
+-    }
+-
+-    public function testImportSuccess()
+-    {
+-        $data = [
+-            'meta' => [
+-                'url' => '/things?key=value',
+-                'simple_url' => '/things',
+-                'get' => [],
+-                'env' => [],
+-                'SERVER' => ['REQUEST_TIME' => 1358787612],
+-                'request_date' => '2013-01-21',
+-                'request_ts' => ['sec' => 1358787612, 'usec' => 0],
+-                'request_ts_micro' => ['sec' => 1358787612, 'usec' => 123456]
+-            ],
+-            'profile' => [
+-                "main()" => [
+-                    "ct" => 1,
+-                    "wt" => 50139,
+-                    "cpu" => 49513,
+-                    "mu" => 3449360,
+-                    "pmu" => 3535120
+-                ]
+-            ]
+-        ];
+-        Environment::mock(array(
+-            'SCRIPT_NAME' => 'index.php',
+-            'PATH_INFO' => '/',
+-            'slim.input' => json_encode($data)
+-        ));
+-
+-        $before = $this->profiles->getForUrl('/things', []);
+-        $this->assertEmpty($before['results']);
+-
+-        $this->import->import();
+-
+-        $after = $this->profiles->getForUrl('/things', []);
+-        $this->assertNotEmpty($after['results']);
+-        $this->assertInstanceOf(Xhgui_Profile::class, $after['results'][0]);
+-    }
+-}
+diff --git a/tests/Controller/RunTest.php b/tests/Controller/RunTest.php
+index b5016f4..d6ae225 100644
+--- a/tests/Controller/RunTest.php
++++ b/tests/Controller/RunTest.php
+@@ -4 +4 @@ use Slim\Environment;
+-class Controller_RunTest extends PHPUnit\Framework\TestCase
++class Controller_RunTest extends PHPUnit_Framework_TestCase
+@@ -15,4 +15,5 @@ class Controller_RunTest extends PHPUnit\Framework\TestCase
+-        $mock = $this->getMockBuilder('Slim\Slim')
+-            ->setMethods(array('redirect', 'render', 'urlFor'))
+-            ->setConstructorArgs(array($di['config']))
+-            ->getMock();
++        $mock = $this->getMock(
++                'Slim\Slim',
++                array('redirect', 'render', 'urlFor'),
++                array($di['config'])
++            );
+@@ -23 +23,0 @@ class Controller_RunTest extends PHPUnit\Framework\TestCase
+-        $this->import = $di['importController'];
+@@ -26 +26 @@ class Controller_RunTest extends PHPUnit\Framework\TestCase
+-        $this->profiles = $di['searcher.mongo'];
++        $this->profiles = $di['profiles'];
+@@ -28 +27,0 @@ class Controller_RunTest extends PHPUnit\Framework\TestCase
+-        $this->saver = $di['saver.mongo'];
+@@ -142 +141 @@ class Controller_RunTest extends PHPUnit\Framework\TestCase
+-        loadFixture($this->saver, XHGUI_ROOT_DIR . '/tests/fixtures/results.json');
++        loadFixture($this->profiles, 'tests/fixtures/results.json');
+@@ -158 +157 @@ class Controller_RunTest extends PHPUnit\Framework\TestCase
+-        loadFixture($this->saver, XHGUI_ROOT_DIR . '/tests/fixtures/results.json');
++        loadFixture($this->profiles, 'tests/fixtures/results.json');
+@@ -172,101 +170,0 @@ class Controller_RunTest extends PHPUnit\Framework\TestCase
+-    public function testDeleteSubmit()
+-    {
+-        loadFixture($this->saver, XHGUI_ROOT_DIR . '/tests/fixtures/results.json');
+-
+-        Environment::mock(array(
+-            'REQUEST_METHOD' => 'POST',
+-            'SCRIPT_NAME' => 'index.php',
+-            'PATH_INFO' => '/run/delete',
+-            'slim.request.form_hash' => [
+-                'id' => 'aaaaaaaaaaaaaaaaaaaaaaaa',
+-            ],
+-        ));
+-
+-        $this->app->expects($this->once())
+-            ->method('urlFor')
+-            ->with('home');
+-
+-        $this->app->expects($this->once())
+-            ->method('redirect');
+-
+-        $result = $this->profiles->getAll();
+-        $this->assertCount(5, $result['results']);
+-
+-        $this->runs->deleteSubmit();
+-
+-        $result = $this->profiles->getAll();
+-        $this->assertCount(4, $result['results']);
+-    }
+-
+-    public function testDeleteAllSubmit()
+-    {
+-        loadFixture($this->saver, XHGUI_ROOT_DIR . '/tests/fixtures/results.json');
+-
+-        Environment::mock(array(
+-          'SCRIPT_NAME' => 'index.php',
+-          'PATH_INFO' => '/run/delete_all',
+-        ));
+-
+-        $this->app->expects($this->once())
+-          ->method('urlFor')
+-          ->with('home');
+-
+-        $this->app->expects($this->once())
+-          ->method('redirect');
+-
+-        $result = $this->profiles->getAll();
+-        $this->assertCount(5, $result['results']);
+-
+-        $this->runs->deleteAllSubmit();
+-
+-        $result = $this->profiles->getAll();
+-        $this->assertCount(0, $result['results']);
+-    }
+-
+-    public function testFilterCustomMethods()
+-    {
+-        loadFixture($this->saver, XHGUI_ROOT_DIR . '/tests/fixtures/results.json');
+-
+-        Environment::mock(array(
+-            'SCRIPT_NAME' => 'index.php',
+-            'PATH_INFO' => '/run/view',
+-            'QUERY_STRING' => 'id=aaaaaaaaaaaaaaaaaaaaaaad&filter=main*,strpos()',
+-        ));
+-
+-        $this->runs->view();
+-        $result = $this->runs->templateVars();
+-
+-        $this->assertCount(1, $result['profile']);
+-    }
+-
+-    public function testFilterCustomMethod()
+-    {
+-        loadFixture($this->saver, XHGUI_ROOT_DIR . '/tests/fixtures/results.json');
+-
+-        Environment::mock(array(
+-            'SCRIPT_NAME' => 'index.php',
+-            'PATH_INFO' => '/run/view',
+-            'QUERY_STRING' => 'id=aaaaaaaaaaaaaaaaaaaaaaad&filter=main*',
+-        ));
+-
+-        $this->runs->view();
+-        $result = $this->runs->templateVars();
+-
+-        $this->assertCount(2, $result['profile']);
+-    }
+-
+-    public function testFilterMethods()
+-    {
+-        loadFixture($this->saver, XHGUI_ROOT_DIR . '/tests/fixtures/results.json');
+-
+-        Environment::mock(array(
+-            'SCRIPT_NAME' => 'index.php',
+-            'PATH_INFO' => '/run/view',
+-            'QUERY_STRING' => 'id=aaaaaaaaaaaaaaaaaaaaaaad&filter=true',
+-        ));
+-
+-        $this->runs->view();
+-        $result = $this->runs->templateVars();
+-
+-        $this->assertCount(2, $result['profile']);
+-    }
+diff --git a/tests/Controller/WatchTest.php b/tests/Controller/WatchTest.php
+index c31f545..1a25b68 100644
+--- a/tests/Controller/WatchTest.php
++++ b/tests/Controller/WatchTest.php
+@@ -4 +4 @@ use Slim\Environment;
+-class Controller_WatchTest extends PHPUnit\Framework\TestCase
++class Controller_WatchTest extends PHPUnit_Framework_TestCase
+@@ -16,4 +16,5 @@ class Controller_WatchTest extends PHPUnit\Framework\TestCase
+-        $mock = $this->getMockBuilder('Slim\Slim')
+-            ->setMethods(array('redirect', 'render', 'urlFor'))
+-            ->setConstructorArgs(array($di['config']))
+-            ->getMock();
++        $mock = $this->getMock(
++                'Slim\Slim',
++                array('redirect', 'render', 'urlFor'),
++                array($di['config'])
++            );
+@@ -25,2 +26,2 @@ class Controller_WatchTest extends PHPUnit\Framework\TestCase
+-        $this->searcher = $di['searcher'];
+-        $this->searcher->truncateWatches();
++        $this->watchFunctions = $di['watchFunctions'];
++        $this->watchFunctions->truncate();
+@@ -52 +53 @@ class Controller_WatchTest extends PHPUnit\Framework\TestCase
+-        $result = $this->searcher->getAllWatches();
++        $result = $this->watchFunctions->getAll();
+@@ -61,2 +62,2 @@ class Controller_WatchTest extends PHPUnit\Framework\TestCase
+-        $this->searcher->saveWatch(array('name' => 'strlen'));
+-        $saved = $this->searcher->getAllWatches();
++        $this->watchFunctions->save(array('name' => 'strlen'));
++        $saved = $this->watchFunctions->getAll();
+@@ -70 +71 @@ class Controller_WatchTest extends PHPUnit\Framework\TestCase
+-        $result = $this->searcher->getAllWatches();
++        $result = $this->watchFunctions->getAll();
+@@ -78,2 +79,2 @@ class Controller_WatchTest extends PHPUnit\Framework\TestCase
+-        $this->searcher->saveWatch(array('name' => 'strlen'));
+-        $saved = $this->searcher->getAllWatches();
++        $this->watchFunctions->save(array('name' => 'strlen'));
++        $saved = $this->watchFunctions->getAll();
+@@ -87 +88 @@ class Controller_WatchTest extends PHPUnit\Framework\TestCase
+-        $result = $this->searcher->getAllWatches();
++        $result = $this->watchFunctions->getAll();
+diff --git a/tests/Db/MapperTest.php b/tests/Db/MapperTest.php
+index 4e61a3e..1cd4bcc 100644
+--- a/tests/Db/MapperTest.php
++++ b/tests/Db/MapperTest.php
+@@ -3 +3 @@
+-class Db_MapperTest extends PHPUnit\Framework\TestCase
++class Db_MapperTest extends PHPUnit_Framework_TestCase
+diff --git a/tests/ProfileTest.php b/tests/ProfileTest.php
+index 4e6680d..2d8f573 100644
+--- a/tests/ProfileTest.php
++++ b/tests/ProfileTest.php
+@@ -3 +3 @@
+-class ProfileTest extends PHPUnit\Framework\TestCase
++class ProfileTest extends PHPUnit_Framework_TestCase
+@@ -8 +8 @@ class ProfileTest extends PHPUnit\Framework\TestCase
+-        $contents = file_get_contents(XHGUI_ROOT_DIR . '/tests/fixtures/results.json');
++        $contents = file_get_contents('tests/fixtures/results.json');
+@@ -337 +337 @@ class ProfileTest extends PHPUnit\Framework\TestCase
+-        $this->assertEquals(0.33, number_format($result['diffPercent']['functionCount'], 2));
++        $this->assertEquals(0.5, $result['diffPercent']['functionCount']);
+@@ -492,0 +493,24 @@ class ProfileTest extends PHPUnit\Framework\TestCase
++
++    public function testGetFlamegraph()
++    {
++        $fixture = $this->_fixture[0];
++        $profile = new Xhgui_Profile($fixture);
++        $result = $profile->getFlamegraph();
++        $expected = array(
++            'data' => array(
++                'name' => 'main()',
++                'value' => 50139,
++                'children' => array(
++                    array(
++                        'name' => 'strpos()',
++                        'value' => 600
++                    )
++                ),
++            ),
++            'sort' => array(
++                'main()' => 0,
++                'strpos()' => 1
++            )
++        );
++        $this->assertEquals($expected, $result);
++    }
+diff --git a/tests/Searcher/MongoTest.php b/tests/ProfilesTest.php
+similarity index 59%
+rename from tests/Searcher/MongoTest.php
+rename to tests/ProfilesTest.php
+index b36a343..c47777f 100644
+--- a/tests/Searcher/MongoTest.php
++++ b/tests/ProfilesTest.php
+@@ -2,2 +2 @@
+-
+-class MongoTest extends PHPUnit\Framework\TestCase
++class ProfilesTest extends PHPUnit_Framework_TestCase
+@@ -5,5 +3,0 @@ class MongoTest extends PHPUnit\Framework\TestCase
+-    /**
+-     * @var Xhgui_Searcher_Mongo
+-     */
+-    private $mongo;
+-
+@@ -13,5 +7,2 @@ class MongoTest extends PHPUnit\Framework\TestCase
+-        $this->mongo = $di['searcher.mongo'];
+-
+-        $di['db']->watches->drop();
+-
+-        loadFixture($di['saver.mongo'], XHGUI_ROOT_DIR . '/tests/fixtures/results.json');
++        $this->profiles = $di['profiles'];
++        loadFixture($this->profiles, 'tests/fixtures/results.json');
+@@ -20 +11 @@ class MongoTest extends PHPUnit\Framework\TestCase
+-    public function testCustomQuery()
++    public function testPagination()
+@@ -22 +13,12 @@ class MongoTest extends PHPUnit\Framework\TestCase
+-        $conditions = ['meta.simple_url' => '/tasks'];
++        $options = array(
++            'page' => 1,
++            'sort' => 'wt',
++        );
++        $result = $this->profiles->paginate($options);
++        $this->assertEquals(25, $result['perPage'], 'default works');
++        $this->assertEquals(1, $result['page']);
++        $this->assertEquals(
++            array('profile.main().wt' => -1),
++            $result['sort']
++        );
++    }
+@@ -24 +26,12 @@ class MongoTest extends PHPUnit\Framework\TestCase
+-        $results = $this->mongo->query($conditions, 10);
++    public function testPaginateInvalidSort()
++    {
++        $options = array(
++            'page' => 1,
++            'sort' => 'barf',
++        );
++        $result = $this->profiles->paginate($options);
++        $this->assertEquals(
++            array('meta.SERVER.REQUEST_TIME' => -1),
++            $result['sort']
++        );
++    }
+@@ -26,2 +39,8 @@ class MongoTest extends PHPUnit\Framework\TestCase
+-        $this->assertTrue(is_array($results));
+-        $this->assertCount(3, $results);
++    public function testPaginateOutOfRangePage()
++    {
++        $options = array(
++            'page' => 9000,
++            'sort' => 'barf',
++        );
++        $result = $this->profiles->paginate($options);
++        $this->assertEquals(1, $result['page']);
+@@ -35 +54 @@ class MongoTest extends PHPUnit\Framework\TestCase
+-        $result = $this->mongo->getForUrl('/', $options);
++        $result = $this->profiles->getForUrl('/', $options);
+@@ -43 +62 @@ class MongoTest extends PHPUnit\Framework\TestCase
+-        $result = $this->mongo->getForUrl('/not-there', $options);
++        $result = $this->profiles->getForUrl('/not-there', $options);
+@@ -56 +75 @@ class MongoTest extends PHPUnit\Framework\TestCase
+-        $result = $this->mongo->getForUrl('/', $options, $search);
++        $result = $this->profiles->getForUrl('/', $options, $search);
+@@ -66 +85 @@ class MongoTest extends PHPUnit\Framework\TestCase
+-        $result = $this->mongo->getForUrl('/', $options, $search);
++        $result = $this->profiles->getForUrl('/', $options, $search);
+@@ -72 +91 @@ class MongoTest extends PHPUnit\Framework\TestCase
+-        $result = $this->mongo->getAvgsForUrl('/');
++        $result = $this->profiles->getAvgsForUrl('/');
+@@ -87 +106 @@ class MongoTest extends PHPUnit\Framework\TestCase
+-        $result = $this->mongo->getAvgsForUrl('/', $search);
++        $result = $this->profiles->getAvgsForUrl('/', $search);
+@@ -101 +120 @@ class MongoTest extends PHPUnit\Framework\TestCase
+-        $result = $this->mongo->getPercentileForUrl(20, '/', $search);
++        $result = $this->profiles->getPercentileForUrl(20, '/', $search);
+@@ -113 +132 @@ class MongoTest extends PHPUnit\Framework\TestCase
+-        $result = $this->mongo->getPercentileForUrl(20, '/', $search);
++        $result = $this->profiles->getPercentileForUrl(20, '/', $search);
+@@ -119 +138 @@ class MongoTest extends PHPUnit\Framework\TestCase
+-        $result = $this->mongo->getAll(array(
++        $result = $this->profiles->getAll(array(
+@@ -134 +153 @@ class MongoTest extends PHPUnit\Framework\TestCase
+-        $result = $this->mongo->latest();
++        $result = $this->profiles->latest();
+@@ -139,42 +157,0 @@ class MongoTest extends PHPUnit\Framework\TestCase
+-    public function testSaveInsert()
+-    {
+-        $data = array(
+-            'name' => 'strlen',
+-        );
+-        $this->assertTrue($this->mongo->saveWatch($data));
+-        $this->assertCount(1, $this->mongo->getAllWatches());
+-
+-        $data = array(
+-            'name' => 'empty',
+-        );
+-        $this->assertTrue($this->mongo->saveWatch($data));
+-        $this->assertCount(2, $this->mongo->getAllWatches());
+-    }
+-
+-    public function testSaveUpdate()
+-    {
+-        $data = array(
+-            'name' => 'strlen',
+-        );
+-        $this->mongo->saveWatch($data);
+-        $result = $this->mongo->getAllWatches();
+-
+-        $result[0]['name'] = 'strpos';
+-        $this->assertTrue($this->mongo->saveWatch($result[0]));
+-        $results = $this->mongo->getAllWatches();
+-        $this->assertCount(1, $results);
+-        $this->assertEquals('strpos', $results[0]['name']);
+-    }
+-
+-    public function testSaveRemove()
+-    {
+-        $data = array(
+-            'name' => 'strlen',
+-        );
+-        $this->mongo->saveWatch($data);
+-        $result = $this->mongo->getAllWatches();
+-
+-        $result[0]['removed'] = 1;
+-        $this->assertTrue($this->mongo->saveWatch($result[0]));
+-        $this->assertCount(0, $this->mongo->getAllWatches());
+-    }
+diff --git a/tests/Saver/FileTest.php b/tests/Saver/FileTest.php
+index 4f3ca1a..739fb45 100644
+--- a/tests/Saver/FileTest.php
++++ b/tests/Saver/FileTest.php
+@@ -3 +3 @@
+-class Saver_FileTest extends PHPUnit\Framework\TestCase
++class Saver_FileTest extends PHPUnit_Framework_TestCase
+@@ -7,2 +7,2 @@ class Saver_FileTest extends PHPUnit\Framework\TestCase
+-        $data = json_decode(file_get_contents(XHGUI_ROOT_DIR . '/tests/fixtures/results.json'), true);
+-
++        $data = file_get_contents('tests/fixtures/results.json');
++        
+@@ -10 +10 @@ class Saver_FileTest extends PHPUnit\Framework\TestCase
+-
++        
+@@ -13 +13 @@ class Saver_FileTest extends PHPUnit\Framework\TestCase
+-
++        
+diff --git a/tests/Saver/MongoTest.php b/tests/Saver/MongoTest.php
+index 76b5d75..115d970 100644
+--- a/tests/Saver/MongoTest.php
++++ b/tests/Saver/MongoTest.php
+@@ -3 +3 @@
+-class Saver_MongoTest extends PHPUnit\Framework\TestCase
++class Saver_MongoTest extends PHPunit_Framework_TestCase
+@@ -7 +7 @@ class Saver_MongoTest extends PHPUnit\Framework\TestCase
+-        $data = json_decode(file_get_contents(XHGUI_ROOT_DIR . '/tests/fixtures/results.json'), true);
++        $data = file_get_contents('tests/fixtures/results.json');
+@@ -9 +9 @@ class Saver_MongoTest extends PHPUnit\Framework\TestCase
+-        $collection = $this->getMockBuilder(MongoCollection::class)
++        $profiles = $this->getMockBuilder('Xhgui_Profiles')
+@@ -12 +12 @@ class Saver_MongoTest extends PHPUnit\Framework\TestCase
+-        $collection->expects($this->once())
++        $profiles->expects($this->once())
+@@ -14 +14 @@ class Saver_MongoTest extends PHPUnit\Framework\TestCase
+-            ->with($this->equalTo($data + ['_id' => Xhgui_Saver_Mongo::getLastProfilingId()]));
++            ->with($this->equalTo($data));
+@@ -16 +16 @@ class Saver_MongoTest extends PHPUnit\Framework\TestCase
+-        $saver = new Xhgui_Saver_Mongo($collection);
++        $saver = new Xhgui_Saver_Mongo($profiles);
+diff --git a/tests/Twig/ExtensionTest.php b/tests/Twig/ExtensionTest.php
+index 1c561fb..be6ee0d 100755
+--- a/tests/Twig/ExtensionTest.php
++++ b/tests/Twig/ExtensionTest.php
+@@ -5 +5 @@ use Slim\Environment;
+-class Xhgui_Twig_ExtensionTest extends PHPUnit\Framework\TestCase
++class Xhgui_Twig_ExtensionTest extends PHPUnit_Framework_TestCase
+diff --git a/tests/WatchFunctionsTest.php b/tests/WatchFunctionsTest.php
+new file mode 100644
+index 0000000..691b090
+--- /dev/null
++++ b/tests/WatchFunctionsTest.php
+@@ -0,0 +1,55 @@
++<?php
++class WatchFunctionsTest extends PHPUnit_Framework_TestCase
++{
++    public function setUp()
++    {
++        parent::setUp();
++        $di = Xhgui_ServiceContainer::instance();
++        $this->watch = $di['watchFunctions'];
++        $this->watch->truncate();
++    }
++
++    public function testSaveInsert()
++    {
++        $data = array(
++            'name' => 'strlen',
++        );
++        $this->assertTrue($this->watch->save($data));
++        $this->assertCount(1, $this->watch->getAll());
++
++        $data = array(
++            'name' => 'empty',
++        );
++        $this->assertTrue($this->watch->save($data));
++        $this->assertCount(2, $this->watch->getAll());
++    }
++
++    public function testSaveUpdate()
++    {
++        $data = array(
++            'name' => 'strlen',
++        );
++        $this->watch->save($data);
++        $result = $this->watch->getAll();
++
++        $result[0]['name'] = 'strpos';
++        $this->assertTrue($this->watch->save($result[0]));
++        $results = $this->watch->getAll();
++        $this->assertCount(1, $results);
++        $this->assertEquals('strpos', $results[0]['name']);
++    }
++
++    public function testSaveRemove()
++    {
++        $data = array(
++            'name' => 'strlen',
++        );
++        $this->watch->save($data);
++        $result = $this->watch->getAll();
++
++        $result[0]['removed'] = 1;
++        $this->assertTrue($this->watch->save($result[0]));
++        $this->assertCount(0, $this->watch->getAll());
++    }
++
++}
+diff --git a/tests/bootstrap.php b/tests/bootstrap.php
+index 74ef288..9950ab8 100644
+--- a/tests/bootstrap.php
++++ b/tests/bootstrap.php
+@@ -20,3 +20,3 @@ unset($di, $config);
+-function loadFixture(Xhgui_Saver_Interface $saver, $file)
+-{
+-    $data = json_decode(file_get_contents($file), true);
++function loadFixture($profiles, $file) {
++    $contents = file_get_contents($file);
++    $data = json_decode($contents, true);
+@@ -31 +31 @@ function loadFixture(Xhgui_Saver_Interface $saver, $file)
+-        $saver->save($record);
++        $profiles->insert($record);
+diff --git a/tests/fixtures/results.json b/tests/fixtures/results.json
+index 2044cb8..830bd81 100644
+--- a/tests/fixtures/results.json
++++ b/tests/fixtures/results.json
+@@ -170,7 +169,0 @@
+-            },
+-            "Composer/Autoload": {
+-                "ct": 1,
+-                "wt": 10,
+-                "cpu": 12,
+-                "mu": 3000,
+-                "pmu": 3001
+diff --git a/webroot/css/d3.flameGraph.css b/webroot/css/d3.flameGraph.css
+new file mode 100644
+index 0000000..7136a79
+--- /dev/null
++++ b/webroot/css/d3.flameGraph.css
+@@ -0,0 +1,78 @@
++.d3-flame-graph rect {
++  stroke: #fff;
++  fill-opacity: .8;
++}
++
++.d3-flame-graph .frame {
++  cursor: pointer;
++}
++.d3-flame-graph .frame:hover .label {
++  color: #fff;
++}
++
++.d3-flame-graph .label {
++  pointer-events: none;
++  white-space: nowrap;
++  text-overflow: ellipsis;
++  overflow: hidden;
++  font-size: 12px;
++  font-family: Verdana;
++  margin-left: 4px;
++  margin-right: 4px;
++  line-height: 1.5;
++  padding: 0 0 0;
++  font-weight: 400;
++  color: black;
++  text-align: left;
++}
++
++.d3-flame-graph .fade {
++  opacity: 0.6 !important;
++}
++
++.d3-flame-graph .title {
++  font-size: 20px;
++}
++
++.d3-flame-graph .label {
++  background: transparent;
++}
++
++.d3-flame-graph-tip {
++  line-height: 1;
++  padding: 12px;
++  background: #fff;
++  border-radius: 6px;
++  box-shadow: 0 5px 10px rgba(0, 0, 0, 0.2);
++  border: 1px solid rgba(0, 0, 0, 0.2);
++  color: #000;
++  pointer-events: none;
++}
++
++/* Creates a small triangle extender for the tooltip */
++.d3-flame-graph-tip:before,
++.d3-flame-graph-tip:after {
++    pointer-events: none;
++    content: '';
++    position: absolute;
++    display: block;
++    width: 0;
++    height: 0;
++    border-width: 11px;
++    border-color: transparent;
++    border-style: solid;
++    left: 50%;
++    z-index: 2;
++}
++.d3-flame-graph-tip:after {
++    border-bottom-color: #fff;
++    margin-left: -11px;
++    top: -22px;
++    z-index: 2;
++}
++.d3-flame-graph-tip:before {
++    border-width: 12px;
++    border-bottom-color: #999;
++    margin-left: -12px;
++    top: -24px;
++}
+diff --git a/webroot/css/xhgui.css b/webroot/css/xhgui.css
+index 09215ca..5068fd0 100644
+--- a/webroot/css/xhgui.css
++++ b/webroot/css/xhgui.css
+@@ -378 +377,0 @@ tr .no-results {
+-
+diff --git a/webroot/js/d3-tip-index.js b/webroot/js/d3-tip-index.js
+new file mode 100644
+index 0000000..13e146b
+--- /dev/null
++++ b/webroot/js/d3-tip-index.js
+@@ -0,0 +1,324 @@
++// d3.tip
++// Copyright (c) 2013 Justin Palmer
++//
++// Tooltips for d3.js SVG visualizations
++
++(function (root, factory) {
++  if (typeof define === 'function' && define.amd) {
++    // AMD. Register as an anonymous module with d3 as a dependency.
++    define(['d3'], factory)
++  } else if (typeof module === 'object' && module.exports) {
++    // CommonJS
++    module.exports = function(d3) {
++      d3.tip = factory(d3)
++      return d3.tip
++    }
++  } else {
++    // Browser global.
++    root.d3.tip = factory(root.d3)
++  }
++}(this, function (d3) {
++
++  // Public - contructs a new tooltip
++  //
++  // Returns a tip
++  return function() {
++    var direction = d3_tip_direction,
++        offset    = d3_tip_offset,
++        html      = d3_tip_html,
++        node      = initNode(),
++        svg       = null,
++        point     = null,
++        target    = null
++
++    function tip(vis) {
++      svg = getSVGNode(vis)
++      point = svg.createSVGPoint()
++      document.body.appendChild(node)
++    }
++
++    // Public - show the tooltip on the screen
++    //
++    // Returns a tip
++    tip.show = function() {
++      var args = Array.prototype.slice.call(arguments)
++      if(args[args.length - 1] instanceof SVGElement) target = args.pop()
++
++      var content = html.apply(this, args),
++          poffset = offset.apply(this, args),
++          dir     = direction.apply(this, args),
++          nodel   = getNodeEl(),
++          i       = directions.length,
++          coords,
++          scrollTop  = document.documentElement.scrollTop || document.body.scrollTop,
++          scrollLeft = document.documentElement.scrollLeft || document.body.scrollLeft
++
++      nodel.html(content)
++        .style({ opacity: 1, 'pointer-events': 'all' })
++
++      while(i--) nodel.classed(directions[i], false)
++      coords = direction_callbacks.get(dir).apply(this)
++      nodel.classed(dir, true).style({
++        top: (coords.top +  poffset[0]) + scrollTop + 'px',
++        left: (coords.left + poffset[1]) + scrollLeft + 'px'
++      })
++
++      return tip
++    }
++
++    // Public - hide the tooltip
++    //
++    // Returns a tip
++    tip.hide = function() {
++      var nodel = getNodeEl()
++      nodel.style({ opacity: 0, 'pointer-events': 'none' })
++      return tip
++    }
++
++    // Public: Proxy attr calls to the d3 tip container.  Sets or gets attribute value.
++    //
++    // n - name of the attribute
++    // v - value of the attribute
++    //
++    // Returns tip or attribute value
++    tip.attr = function(n, v) {
++      if (arguments.length < 2 && typeof n === 'string') {
++        return getNodeEl().attr(n)
++      } else {
++        var args =  Array.prototype.slice.call(arguments)
++        d3.selection.prototype.attr.apply(getNodeEl(), args)
++      }
++
++      return tip
++    }
++
++    // Public: Proxy style calls to the d3 tip container.  Sets or gets a style value.
++    //
++    // n - name of the property
++    // v - value of the property
++    //
++    // Returns tip or style property value
++    tip.style = function(n, v) {
++      if (arguments.length < 2 && typeof n === 'string') {
++        return getNodeEl().style(n)
++      } else {
++        var args =  Array.prototype.slice.call(arguments)
++        d3.selection.prototype.style.apply(getNodeEl(), args)
++      }
++
++      return tip
++    }
++
++    // Public: Set or get the direction of the tooltip
++    //
++    // v - One of n(north), s(south), e(east), or w(west), nw(northwest),
++    //     sw(southwest), ne(northeast) or se(southeast)
++    //
++    // Returns tip or direction
++    tip.direction = function(v) {
++      if (!arguments.length) return direction
++      direction = v == null ? v : d3.functor(v)
++
++      return tip
++    }
++
++    // Public: Sets or gets the offset of the tip
++    //
++    // v - Array of [x, y] offset
++    //
++    // Returns offset or
++    tip.offset = function(v) {
++      if (!arguments.length) return offset
++      offset = v == null ? v : d3.functor(v)
++
++      return tip
++    }
++
++    // Public: sets or gets the html value of the tooltip
++    //
++    // v - String value of the tip
++    //
++    // Returns html value or tip
++    tip.html = function(v) {
++      if (!arguments.length) return html
++      html = v == null ? v : d3.functor(v)
++
++      return tip
++    }
++
++    // Public: destroys the tooltip and removes it from the DOM
++    //
++    // Returns a tip
++    tip.destroy = function() {
++      if(node) {
++        getNodeEl().remove();
++        node = null;
++      }
++      return tip;
++    }
++
++    function d3_tip_direction() { return 'n' }
++    function d3_tip_offset() { return [0, 0] }
++    function d3_tip_html() { return ' ' }
++
++    var direction_callbacks = d3.map({
++      n:  direction_n,
++      s:  direction_s,
++      e:  direction_e,
++      w:  direction_w,
++      nw: direction_nw,
++      ne: direction_ne,
++      sw: direction_sw,
++      se: direction_se
++    }),
++
++    directions = direction_callbacks.keys()
++
++    function direction_n() {
++      var bbox = getScreenBBox()
++      return {
++        top:  bbox.n.y - node.offsetHeight,
++        left: bbox.n.x - node.offsetWidth / 2
++      }
++    }
++
++    function direction_s() {
++      var bbox = getScreenBBox()
++      return {
++        top:  bbox.s.y,
++        left: bbox.s.x - node.offsetWidth / 2
++      }
++    }
++
++    function direction_e() {
++      var bbox = getScreenBBox()
++      return {
++        top:  bbox.e.y - node.offsetHeight / 2,
++        left: bbox.e.x
++      }
++    }
++
++    function direction_w() {
++      var bbox = getScreenBBox()
++      return {
++        top:  bbox.w.y - node.offsetHeight / 2,
++        left: bbox.w.x - node.offsetWidth
++      }
++    }
++
++    function direction_nw() {
++      var bbox = getScreenBBox()
++      return {
++        top:  bbox.nw.y - node.offsetHeight,
++        left: bbox.nw.x - node.offsetWidth
++      }
++    }
++
++    function direction_ne() {
++      var bbox = getScreenBBox()
++      return {
++        top:  bbox.ne.y - node.offsetHeight,
++        left: bbox.ne.x
++      }
++    }
++
++    function direction_sw() {
++      var bbox = getScreenBBox()
++      return {
++        top:  bbox.sw.y,
++        left: bbox.sw.x - node.offsetWidth
++      }
++    }
++
++    function direction_se() {
++      var bbox = getScreenBBox()
++      return {
++        top:  bbox.se.y,
++        left: bbox.e.x
++      }
++    }
++
++    function initNode() {
++      var node = d3.select(document.createElement('div'))
++      node.style({
++        position: 'absolute',
++        top: 0,
++        opacity: 0,
++        'pointer-events': 'none',
++        'box-sizing': 'border-box'
++      })
++
++      return node.node()
++    }
++
++    function getSVGNode(el) {
++      el = el.node()
++      if(el.tagName.toLowerCase() === 'svg')
++        return el
++
++      return el.ownerSVGElement
++    }
++
++    function getNodeEl() {
++      if(node === null) {
++        node = initNode();
++        // re-add node to DOM
++        document.body.appendChild(node);
++      };
++      return d3.select(node);
++    }
++
++    // Private - gets the screen coordinates of a shape
++    //
++    // Given a shape on the screen, will return an SVGPoint for the directions
++    // n(north), s(south), e(east), w(west), ne(northeast), se(southeast), nw(northwest),
++    // sw(southwest).
++    //
++    //    +-+-+
++    //    |   |
++    //    +   +
++    //    |   |
++    //    +-+-+
++    //
++    // Returns an Object {n, s, e, w, nw, sw, ne, se}
++    function getScreenBBox() {
++      var targetel   = target || d3.event.target;
++
++      while ('undefined' === typeof targetel.getScreenCTM && 'undefined' === targetel.parentNode) {
++          targetel = targetel.parentNode;
++      }
++
++      var bbox       = {},
++          matrix     = targetel.getScreenCTM(),
++          tbbox      = targetel.getBBox(),
++          width      = tbbox.width,
++          height     = tbbox.height,
++          x          = tbbox.x,
++          y          = tbbox.y
++
++      point.x = x
++      point.y = y
++      bbox.nw = point.matrixTransform(matrix)
++      point.x += width
++      bbox.ne = point.matrixTransform(matrix)
++      point.y += height
++      bbox.se = point.matrixTransform(matrix)
++      point.x -= width
++      bbox.sw = point.matrixTransform(matrix)
++      point.y -= height / 2
++      bbox.w  = point.matrixTransform(matrix)
++      point.x += width
++      bbox.e = point.matrixTransform(matrix)
++      point.x -= width / 2
++      point.y -= height / 2
++      bbox.n = point.matrixTransform(matrix)
++      point.y += height
++      bbox.s = point.matrixTransform(matrix)
++
++      return bbox
++    }
++
++    return tip
++  };
++
++}));
+diff --git a/webroot/js/d3.flameGraph.js b/webroot/js/d3.flameGraph.js
+new file mode 100644
+index 0000000..a25adfa
+--- /dev/null
++++ b/webroot/js/d3.flameGraph.js
+@@ -0,0 +1,400 @@
++(function() {
++  'use strict';
++
++  function flameGraph() {
++
++    var w = 960, // graph width
++      h = 540, // graph height
++      c = 18, // cell height
++      selection = null, // selection
++      tooltip = true, // enable tooltip
++      title = "", // graph title
++      transitionDuration = 750,
++      transitionEase = "cubic-in-out", // tooltip offset
++      sort = true;
++
++    var tip = d3.tip()
++      .direction("s")
++      .offset([24, 0])
++      .attr('class', 'd3-flame-graph-tip')
++      .html(function(d) { return label(d); });
++
++    var labelFormat = function(d) {
++      return d.name + " (" + d3.round(100 * d.dx, 3) + "%, " + d.value + " samples)";
++    };
++
++    function setDetails(t) {
++      var details = document.getElementById("details");
++      if (details)
++        details.innerHTML = t;
++    }
++
++    function label(d) {
++      if (!d.dummy) {
++        return labelFormat(d);
++      } else {
++        return "";
++      }
++    }
++
++    function name(d) {
++      return d.name;
++    }
++
++    function generateHash(name) {
++      // Return a vector (0.0->1.0) that is a hash of the input string.
++      // The hash is computed to favor early characters over later ones, so
++      // that strings with similar starts have similar vectors. Only the first
++      // 6 characters are considered.
++      var hash = 0, weight = 1, max_hash = 0, mod = 10, max_char = 6;
++      if (name) {
++        for (var i = 0; i < name.length; i++) {
++          if (i > max_char) { break; }
++          hash += weight * (name.charCodeAt(i) % mod);
++          max_hash += weight * (mod - 1);
++          weight *= 0.70;
++        }
++        if (max_hash > 0) { hash = hash / max_hash; }
++      }
++      return hash;
++    }
++
++    function colorHash(name) {
++      // Return an rgb() color string that is a hash of the provided name,
++      // and with a warm palette.
++      var vector = 0;
++      if (name) {
++        name = name.replace(/.*`/, "");		// drop module name if present
++        name = name.replace(/\(.*/, "");	// drop extra info
++        vector = generateHash(name);
++      }
++      var r = 200 + Math.round(55 * vector);
++      var g = 0 + Math.round(230 * (1 - vector));
++      var b = 0 + Math.round(55 * (1 - vector));
++      return "rgb(" + r + "," + g + "," + b + ")";
++    }
++
++    function augment(data) {
++      // Augment partitioning layout with "dummy" nodes so that internal nodes'
++      // values dictate their width. Annoying, but seems to be least painful
++      // option.  https://github.com/mbostock/d3/pull/574
++      if (data.children && (data.children.length > 0)) {
++        data.children.forEach(augment);
++        var childValues = 0;
++        data.children.forEach(function(child) {
++          childValues += child.value;
++        });
++        if (childValues < data.value) {
++          data.children.push(
++            {
++              "name": "",
++              "value": data.value - childValues,
++              "dummy": true
++            }
++          );
++        }
++      }
++    }
++
++    function hide(d) {
++      if(!d.original) {
++        d.original = d.value;
++      }
++      d.value = 0;
++      if(d.children) {
++        d.children.forEach(hide);
++      }
++    }
++
++    function show(d) {
++      d.fade = false;
++      if(d.original) {
++        d.value = d.original;
++      }
++      if(d.children) {
++        d.children.forEach(show);
++      }
++    }
++
++    function getSiblings(d) {
++      var siblings = [];
++      if (d.parent) {
++        var me = d.parent.children.indexOf(d);
++        siblings = d.parent.children.slice(0);
++        siblings.splice(me, 1);
++      }
++      return siblings;
++    }
++
++    function hideSiblings(d) {
++      var siblings = getSiblings(d);
++      siblings.forEach(function(s) {
++        hide(s);
++      });
++      if(d.parent) {
++        hideSiblings(d.parent);
++      }
++    }
++
++    function fadeAncestors(d) {
++      if(d.parent) {
++        d.parent.fade = true;
++        fadeAncestors(d.parent);
++      }
++    }
++
++    function getRoot(d) {
++      if(d.parent) {
++        return getRoot(d.parent);
++      }
++      return d;
++    }
++
++    function zoom(d) {
++      tip.hide(d);
++      hideSiblings(d);
++      show(d);
++      fadeAncestors(d);
++      update();
++    }
++
++    function searchTree(d, term) {
++      var re = new RegExp(term),
++          label = d.name;
++
++      if(d.children) {
++        d.children.forEach(function(child) {
++          searchTree(child, term);
++        });
++      }
++
++      if (label.match(re)) {
++        d.highlight = true;
++      } else {
++        d.highlight = false;
++      }
++    }
++
++    function clear(d) {
++      d.highlight = false;
++      if(d.children) {
++        d.children.forEach(function(child) {
++          clear(child, term);
++        });
++      }
++    }
++
++    function doSort(a, b) {
++      if (typeof sort === 'function') {
++        return sort(a, b);
++      } else if (sort) {
++        return d3.ascending(a.name, b.name);
++      } else {
++        return 0;
++      }
++    }
++
++    var partition = d3.layout.partition()
++      .sort(doSort)
++      .value(function(d) {return d.v || d.value;})
++      .children(function(d) {return d.c || d.children;});
++
++    function update() {
++
++      selection.each(function(data) {
++
++        var x = d3.scale.linear().range([0, w]),
++            y = d3.scale.linear().range([0, c]);
++
++        var nodes = partition(data);
++
++        var kx = w / data.dx;
++
++        var g = d3.select(this).select("svg").selectAll("g").data(nodes);
++
++        g.transition()
++          .duration(transitionDuration)
++          .ease(transitionEase)
++          .attr("transform", function(d) { return "translate(" + x(d.x) + "," + (h - y(d.depth) - c) + ")"; });
++
++        g.select("rect").transition()
++          .duration(transitionDuration)
++          .ease(transitionEase)
++          .attr("width", function(d) { return d.dx * kx; });
++
++        var node = g.enter()
++          .append("svg:g")
++          .attr("transform", function(d) { return "translate(" + x(d.x) + "," + (h - y(d.depth) - c) + ")"; });
++
++        node.append("svg:rect")
++          .attr("width", function(d) { return d.dx * kx; });
++
++        if (!tooltip)
++          node.append("svg:title");
++
++        node.append("foreignObject")
++          .append("xhtml:div");
++
++        g.attr("width", function(d) { return d.dx * kx; })
++          .attr("height", function(d) { return c; })
++          .attr("name", function(d) { return d.name; })
++          .attr("class", function(d) { return d.fade ? "frame fade" : "frame"; });
++
++        g.select("rect")
++          .attr("height", function(d) { return c; })
++          .attr("fill", function(d) {return d.highlight ? "#E600E6" : colorHash(d.name); })
++          .style("visibility", function(d) {return d.dummy ? "hidden" : "visible";});
++
++        if (!tooltip)
++          g.select("title")
++            .text(label);
++
++        g.select("foreignObject")
++          .attr("width", function(d) { return d.dx * kx; })
++          .attr("height", function(d) { return c; })
++          .select("div")
++          .attr("class", "label")
++          .style("display", function(d) { return (d.dx * kx < 35) || d.dummy ? "none" : "block";})
++          .text(name);
++
++        g.on('click', zoom);
++
++
++
++        g.exit().remove();
++
++        g.on('mouseover', function(d) {
++          if (!d.dummy) {
++            if (tooltip) tip.show(d);
++            setDetails(label(d));
++          }
++        }).on('mouseout', function(d) {
++          if (!d.dummy) {
++            if (tooltip) tip.hide(d);
++            setDetails("");
++          }
++        });
++      });
++    }
++
++    function chart(s) {
++
++      selection = s;
++
++      if (!arguments.length) return chart;
++
++      selection.each(function(data) {
++
++        var svg = d3.select(this)
++          .append("svg:svg")
++          .attr("width", w)
++          .attr("height", h)
++          .attr("class", "partition d3-flame-graph")
++          .call(tip);
++
++        svg.append("svg:text")
++          .attr("class", "title")
++          .attr("text-anchor", "middle")
++          .attr("y", "25")
++          .attr("x", w/2)
++          .attr("fill", "#808080")
++          .text(title);
++
++        augment(data);
++
++        // "creative" fix for node ordering when partition is called for the first time
++        partition(data);
++
++        // first draw
++        update();
++
++      });
++    }
++
++    chart.height = function (_) {
++      if (!arguments.length) { return h; }
++      h = _;
++      return chart;
++    };
++
++    chart.width = function (_) {
++      if (!arguments.length) { return w; }
++      w = _;
++      return chart;
++    };
++
++    chart.cellHeight = function (_) {
++      if (!arguments.length) { return c; }
++      c = _;
++      return chart;
++    };
++
++    chart.tooltip = function (_) {
++      if (!arguments.length) { return tooltip; }
++      if (typeof _ === "function") {
++        tip = _;
++      }
++      tooltip = true;
++      return chart;
++    };
++
++    chart.title = function (_) {
++      if (!arguments.length) { return title; }
++      title = _;
++      return chart;
++    };
++
++    chart.transitionDuration = function (_) {
++      if (!arguments.length) { return transitionDuration; }
++      transitionDuration = _;
++      return chart;
++    };
++
++    chart.transitionEase = function (_) {
++      if (!arguments.length) { return transitionEase; }
++      transitionEase = _;
++      return chart;
++    };
++
++    chart.sort = function (_) {
++      if (!arguments.length) { return sort; }
++      sort = _;
++      return chart;
++    };
++
++    chart.label = function(_) {
++      if (!arguments.length) { return labelFormat; }
++      labelFormat = _;
++      return chart;
++    };
++
++    chart.search = function(term) {
++      selection.each(function(data) {
++        searchTree(data, term);
++        update();
++      });
++    };
++
++    chart.clear = function() {
++      selection.each(function(data) {
++        clear(data);
++        update();
++      });
++    };
++
++    chart.resetZoom = function() {
++      selection.each(function (data) {
++        zoom(data); // zoom to root
++      });
++    };
++
++    return chart;
++  }
++
++  if (typeof module !== 'undefined' && module.exports){
++		module.exports = flameGraph;
++	}
++	else {
++		d3.flameGraph = flameGraph;
++	}
++})();
