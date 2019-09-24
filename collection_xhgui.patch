@@ -1,8 +1,8 @@
-diff --git a/src/Xhgui/Profiles.php b/src/Xhgui/Profiles.php
-index 23a2213..55d1765 100644
---- a/src/Xhgui/Profiles.php
-+++ b/src/Xhgui/Profiles.php
-@@ -8,9 +8,9 @@ class Xhgui_Profiles
+diff --git a/src/Xhgui/Searcher/Mongo.php b/src/Xhgui/Searcher/Mongo.php
+index 6a6a3b6..9dddefd 100644
+--- a/src/Xhgui/Searcher/Mongo.php
++++ b/src/Xhgui/Searcher/Mongo.php
+@@ -11,9 +11,9 @@ class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
  
      protected $_mapper;
  
@@ -10,26 +10,12 @@ index 23a2213..55d1765 100644
 +    public function __construct(MongoDb $db, $collection)
      {
 -        $this->_collection = $db->results;
-+        $this->_collection = $db->$collection;
++        $this->_collection = $db->{$collection};
+         $this->_watches = $db->watches;
          $this->_mapper = new Xhgui_Db_Mapper();
      }
- 
-diff --git a/src/Xhgui/Saver.php b/src/Xhgui/Saver.php
-index 86b6a98..429fc46 100644
---- a/src/Xhgui/Saver.php
-+++ b/src/Xhgui/Saver.php
-@@ -21,7 +21,8 @@ class Xhgui_Saver
-             case 'mongodb':
-             default:
-                 $mongo = new MongoClient($config['db.host'], $config['db.options']);
--                $mongo->{$config['db.db']}->results->findOne();
-+                $coll = $config['db.collection'];
-+                $mongo->{$config['db.db']}->$coll->findOne();
-                 $profiles = new Xhgui_Profiles($mongo->{$config['db.db']});
-                 return new Xhgui_Saver_Mongo($profiles);
-         }
 diff --git a/src/Xhgui/ServiceContainer.php b/src/Xhgui/ServiceContainer.php
-index 072606f..305190a 100644
+index a71f962..6c40022 100644
 --- a/src/Xhgui/ServiceContainer.php
 +++ b/src/Xhgui/ServiceContainer.php
 @@ -1,7 +1,6 @@
@@ -52,23 +38,21 @@ index 072606f..305190a 100644
              // Add renderer.
              $app->add(new Xhgui_Middleware_Render());
  
-@@ -74,8 +68,9 @@ class Xhgui_ServiceContainer extends Pimple
-             if (empty($config['db.options'])) {
+@@ -77,7 +71,7 @@ class Xhgui_ServiceContainer extends Pimple
                  $config['db.options'] = array();
              }
-+            $coll = $config['db.collection'];
              $mongo = new MongoClient($config['db.host'], $config['db.options']);
 -            $mongo->{$config['db.db']}->results->findOne();
-+            $mongo->{$config['db.db']}->$coll->findOne();
++            $mongo->{$config['db.db']}->{$config['db.collection']}->findOne();
  
              return $mongo->{$config['db.db']};
          });
-@@ -85,7 +80,7 @@ class Xhgui_ServiceContainer extends Pimple
+@@ -91,7 +85,7 @@ class Xhgui_ServiceContainer extends Pimple
+         });
+ 
+         $this['searcher.mongo'] = function ($c) {
+-            return new Xhgui_Searcher_Mongo($c['db']);
++            return new Xhgui_Searcher_Mongo($c['db'], $c['config']['db.collection']);
          };
  
-         $this['profiles'] = function ($c) {
--            return new Xhgui_Profiles($c['db']);
-+            return new Xhgui_Profiles($c['db'], $c['config']['db.collection']);
-         };
- 
-         $this['saver'] = function($c) {
+         $this['searcher.pdo'] = function ($c) {
