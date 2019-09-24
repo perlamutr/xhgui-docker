@@ -4,7 +4,7 @@ RUN apt-get update && apt-get install -y libmcrypt-dev libssl-dev libzip-dev ngi
 
 #RUN pecl install mcrypt-1.0.2 && docker-php-ext-enable mcrypt
 RUN docker-php-ext-install -j$(nproc) mcrypt
-RUN pecl install mongo && docker-php-ext-enable mongo
+RUN pecl install mongodb && docker-php-ext-enable mongodb
 RUN pecl install zip && docker-php-ext-enable zip
 
 COPY ./nginx/default.conf /etc/nginx/sites-enabled/default
