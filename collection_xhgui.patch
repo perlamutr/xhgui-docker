@@ -2,57 +2,42 @@ diff --git a/src/Xhgui/Searcher/Mongo.php b/src/Xhgui/Searcher/Mongo.php
 index 6a6a3b6..9dddefd 100644
 --- a/src/Xhgui/Searcher/Mongo.php
 +++ b/src/Xhgui/Searcher/Mongo.php
-@@ -11,9 +11,9 @@ class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
- 
-     protected $_mapper;
- 
+@@ -14 +14 @@ class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
 -    public function __construct(MongoDb $db)
 +    public function __construct(MongoDb $db, $collection)
-     {
+@@ -16 +16 @@ class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
 -        $this->_collection = $db->results;
 +        $this->_collection = $db->{$collection};
-         $this->_watches = $db->watches;
-         $this->_mapper = new Xhgui_Db_Mapper();
-     }
 diff --git a/src/Xhgui/ServiceContainer.php b/src/Xhgui/ServiceContainer.php
-index a71f962..6c40022 100644
+index a71f962..7beb1ff 100644
 --- a/src/Xhgui/ServiceContainer.php
 +++ b/src/Xhgui/ServiceContainer.php
-@@ -1,7 +1,6 @@
- <?php
- use Slim\Slim;
- use Slim\Views\Twig;
+@@ -4 +3,0 @@ use Slim\Views\Twig;
 -use Slim\Middleware\SessionCookie;
- 
- class Xhgui_ServiceContainer extends Pimple
- {
-@@ -46,11 +45,6 @@ class Xhgui_ServiceContainer extends Pimple
-         $this['app'] = $this->share(function ($c) {
-             $app = new Slim($c['config']);
- 
+@@ -9,0 +9,2 @@ class Xhgui_ServiceContainer extends Pimple
++    const TRIES_COUNT = 3;
++
+@@ -49,5 +49,0 @@ class Xhgui_ServiceContainer extends Pimple
 -            // Enable cookie based sessions
 -            $app->add(new SessionCookie(array(
 -                'httponly' => true,
 -            )));
 -
-             // Add renderer.
-             $app->add(new Xhgui_Middleware_Render());
- 
-@@ -77,7 +71,7 @@ class Xhgui_ServiceContainer extends Pimple
-                 $config['db.options'] = array();
-             }
-             $mongo = new MongoClient($config['db.host'], $config['db.options']);
+@@ -79,2 +75,12 @@ class Xhgui_ServiceContainer extends Pimple
+-            $mongo = new MongoClient($config['db.host'], $config['db.options']);
 -            $mongo->{$config['db.db']}->results->findOne();
++            $triesCount = self::TRIES_COUNT;
++            while ($triesCount--) {
++                try {
++                    $mongo = new MongoClient($config['db.host'], $config['db.options']);
++                    break;
++                } catch (MongoConnectionException $e) {
++                    //  lets take a rest and do it again
++                    usleep(200000);
++                }
++            }
++
 +            $mongo->{$config['db.db']}->{$config['db.collection']}->findOne();
- 
-             return $mongo->{$config['db.db']};
-         });
-@@ -91,7 +85,7 @@ class Xhgui_ServiceContainer extends Pimple
-         });
- 
-         $this['searcher.mongo'] = function ($c) {
+@@ -94 +100 @@ class Xhgui_ServiceContainer extends Pimple
 -            return new Xhgui_Searcher_Mongo($c['db']);
 +            return new Xhgui_Searcher_Mongo($c['db'], $c['config']['db.collection']);
-         };
- 
-         $this['searcher.pdo'] = function ($c) {
