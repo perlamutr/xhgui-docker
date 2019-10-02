@@ -1,29 +1,267 @@
+diff --git a/README.md b/README.md
+index c7d4655..69cd81a 100644
+--- a/README.md
++++ b/README.md
+@@ -67,9 +67,9 @@ Installation from source
+    $ mongo
+    > use xhprof
+    > db.results.ensureIndex( { 'meta.SERVER.REQUEST_TIME' : -1 } )
+-   > db.results.ensureIndex( { 'profile.main().wt' : -1 } )
+-   > db.results.ensureIndex( { 'profile.main().mu' : -1 } )
+-   > db.results.ensureIndex( { 'profile.main().cpu' : -1 } )
++   > db.results.ensureIndex( { 'profile.0.wt' : -1 } )
++   > db.results.ensureIndex( { 'profile.0.mu' : -1 } )
++   > db.results.ensureIndex( { 'profile.0.cpu' : -1 } )
+    > db.results.ensureIndex( { 'meta.url' : 1 } )
+    > db.results.ensureIndex( { 'meta.simple_url' : 1 } )
+    ```
+diff --git a/mongo.init.d/xhgui.js b/mongo.init.d/xhgui.js
+index c386fca..3c565a5 100644
+--- a/mongo.init.d/xhgui.js
++++ b/mongo.init.d/xhgui.js
+@@ -1,5 +1,5 @@
+ db.results.ensureIndex( { 'meta.SERVER.REQUEST_TIME' : -1 } );
+-db.results.ensureIndex( { 'profile.main().wt' : -1 } );
+-db.results.ensureIndex( { 'profile.main().mu' : -1 } );
+-db.results.ensureIndex( { 'profile.main().cpu' : -1 } );
++db.results.ensureIndex( { 'profile.0.wt' : -1 } );
++db.results.ensureIndex( { 'profile.0.mu' : -1 } );
++db.results.ensureIndex( { 'profile.0.cpu' : -1 } );
+ db.results.ensureIndex( { 'meta.url' : 1 } );
+diff --git a/src/Xhgui/Controller.php b/src/Xhgui/Controller.php
+index 829f319..da7beae 100644
+--- a/src/Xhgui/Controller.php
++++ b/src/Xhgui/Controller.php
+@@ -22,6 +22,7 @@ abstract class Xhgui_Controller
+     public function __construct(Slim $app)
+     {
+         $this->app = $app;
++        $this->set(['collection' => $app->config('db.collection')]);
+     }
+ 
+     public function set($vars)
+diff --git a/src/Xhgui/Db/Mapper.php b/src/Xhgui/Db/Mapper.php
+index bfaac96..d79b3bc 100644
+--- a/src/Xhgui/Db/Mapper.php
++++ b/src/Xhgui/Db/Mapper.php
+@@ -141,11 +141,11 @@ class Xhgui_Db_Mapper
+         if ($options['sort'] == 'time') {
+             return array('meta.SERVER.REQUEST_TIME' => $direction);
+         } elseif ($options['sort'] == 'wt') {
+-            return array('profile.main().wt' => $direction);
++            return array('profile.0.wt' => $direction);
+         } elseif ($options['sort'] == 'mu') {
+-            return array('profile.main().mu' => $direction);
++            return array('profile.0.mu' => $direction);
+         } elseif ($options['sort'] == 'cpu') {
+-           return array('profile.main().cpu' => $direction);
++           return array('profile.0.cpu' => $direction);
+         }
+     }
+ 
+diff --git a/src/Xhgui/Profile.php b/src/Xhgui/Profile.php
+index 1c0d0f8..2f372d5 100644
+--- a/src/Xhgui/Profile.php
++++ b/src/Xhgui/Profile.php
+@@ -20,7 +20,7 @@ class Xhgui_Profile
+     protected $_exclusiveKeys = array('ewt', 'ecpu', 'emu', 'epmu');
+     protected $_functionCount;
+ 
+-    public function __construct(array $profile, $convert = true)
++    public function __construct(array $profile, array $dict = [], $convert = true)
+     {
+         $this->_data = $profile;
+ 
+@@ -30,7 +30,7 @@ class Xhgui_Profile
+         }
+ 
+         if (!empty($profile['profile']) && $convert) {
+-            $this->_process();
++            $this->_process($dict);
+         }
+     }
+ 
+@@ -43,11 +43,14 @@ class Xhgui_Profile
+      *
+      * @return void
+      */
+-    protected function _process()
++    protected function _process(array $dict)
+     {
+         $result = array();
+-        foreach ($this->_data['profile'] as $name => $values) {
+-            list($parent, $func) = $this->splitName($name);
++        foreach ($this->_data['profile'] as $values) {
++            if ($dict) {
++                $parent = $values['to'] ? $dict[$values['from']] : null;
++                $func = $dict[$values['to'] ?: $values['from']];
++            }
+ 
+             // Generate collapsed data.
+             if (isset($result[$func])) {
+@@ -431,7 +434,7 @@ class Xhgui_Profile
+      * @return array An array of parent, child. parent will be null if there
+      *    is no parent.
+      */
+-    public function splitName($name)
++    public function splitName($name, array $dictionary)
+     {
+         $a = explode("==>", $name);
+         if (isset($a[1])) {
 diff --git a/src/Xhgui/Searcher/Mongo.php b/src/Xhgui/Searcher/Mongo.php
-index 6a6a3b6..9dddefd 100644
+index 6a6a3b6..da8c33a 100644
 --- a/src/Xhgui/Searcher/Mongo.php
 +++ b/src/Xhgui/Searcher/Mongo.php
-@@ -14 +14 @@ class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
+@@ -7,13 +7,18 @@ class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
+ {
+     protected $_collection;
+ 
++    protected $_dictionary;
++
+     protected $_watches;
+ 
+     protected $_mapper;
+ 
 -    public function __construct(MongoDb $db)
-+    public function __construct(MongoDb $db, $collection)
-@@ -16 +16 @@ class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
++    private $dict;
++
++    public function __construct(MongoDb $db, $collection, $dictColl)
+     {
 -        $this->_collection = $db->results;
 +        $this->_collection = $db->{$collection};
++        $this->_dictionary = $db->{$dictColl};
+         $this->_watches = $db->watches;
+         $this->_mapper = new Xhgui_Db_Mapper();
+     }
+@@ -51,6 +56,17 @@ class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
+         )));
+     }
+ 
++    public function getDictionary()
++    {
++        if (!$this->dict) {
++            foreach ($this->_dictionary->find() as $row) {
++                $this->dict[(int)$row['_id']] = (string)$row['f'];
++            }
++        }
++
++        return $this->dict;
++    }
++
+     /**
+      * {@inheritdoc}
+      */
+@@ -86,17 +102,17 @@ class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
+             array(
+                 '$project' => array(
+                     'date' => $col,
+-                    'profile.main()' => 1
++                    'profile.0' => 1
+                 )
+             ),
+             array(
+                 '$group' => array(
+                     '_id' => '$date',
+                     'row_count' => array('$sum' => 1),
+-                    'wall_times' => array('$push' => '$profile.main().wt'),
+-                    'cpu_times' => array('$push' => '$profile.main().cpu'),
+-                    'mu_times' => array('$push' => '$profile.main().mu'),
+-                    'pmu_times' => array('$push' => '$profile.main().pmu'),
++                    'wall_times' => array('$push' => '$profile.0.wt'),
++                    'cpu_times' => array('$push' => '$profile.0.cpu'),
++                    'mu_times' => array('$push' => '$profile.0.mu'),
++                    'pmu_times' => array('$push' => '$profile.0.pmu'),
+                 )
+             ),
+             array(
+@@ -159,16 +175,16 @@ class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
+             array(
+                 '$project' => array(
+                     'date' => '$meta.request_date',
+-                    'profile.main()' => 1,
++                    'profile.0' => 1,
+                 )
+             ),
+             array(
+                 '$group' => array(
+                     '_id' => '$date',
+-                    'avg_wt' => array('$avg' => '$profile.main().wt'),
+-                    'avg_cpu' => array('$avg' => '$profile.main().cpu'),
+-                    'avg_mu' => array('$avg' => '$profile.main().mu'),
+-                    'avg_pmu' => array('$avg' => '$profile.main().pmu'),
++                    'avg_wt' => array('$avg' => '$profile.0.wt'),
++                    'avg_cpu' => array('$avg' => '$profile.0.cpu'),
++                    'avg_mu' => array('$avg' => '$profile.0.mu'),
++                    'avg_pmu' => array('$avg' => '$profile.0.pmu'),
+                 )
+             ),
+             array('$sort' => array('_id' => 1))
+@@ -280,12 +296,11 @@ class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
+         $projection = false;
+         if (isset($options['projection'])) {
+             if ($options['projection'] === true) {
+-                $projection = array('meta' => 1, 'profile.main()' => 1);
++                $projection = array('meta' => 1, 'profile' => 1);
+             } else {
+                 $projection = $options['projection'];
+             }
+         }
+-
+         if ($projection === false) {
+             $cursor = $this->_collection->find($opts['conditions'])
+                 ->sort($opts['sort'])
+@@ -320,12 +335,14 @@ class Xhgui_Searcher_Mongo implements Xhgui_Searcher_Interface
+             throw new Exception('No profile data found.');
+         }
+ 
++        $dict = $this->getDictionary();
++
+         if (is_array($data)) {
+-            return new Xhgui_Profile($data);
++            return new Xhgui_Profile($data, $dict);
+         }
+         $results = [];
+         foreach ($data as $row) {
+-            $results[] = new Xhgui_Profile($row);
++            $results[] = new Xhgui_Profile($row, $dict);
+         }
+         return $results;
+     }
 diff --git a/src/Xhgui/ServiceContainer.php b/src/Xhgui/ServiceContainer.php
-index a71f962..7beb1ff 100644
+index a71f962..09f66bc 100644
 --- a/src/Xhgui/ServiceContainer.php
 +++ b/src/Xhgui/ServiceContainer.php
-@@ -4 +3,0 @@ use Slim\Views\Twig;
+@@ -1,12 +1,13 @@
+ <?php
+ use Slim\Slim;
+ use Slim\Views\Twig;
 -use Slim\Middleware\SessionCookie;
-@@ -9,0 +9,2 @@ class Xhgui_ServiceContainer extends Pimple
+ 
+ class Xhgui_ServiceContainer extends Pimple
+ {
+     protected static $_instance;
+ 
 +    const TRIES_COUNT = 3;
 +
-@@ -49,5 +49,0 @@ class Xhgui_ServiceContainer extends Pimple
+     public static function instance()
+     {
+         if (empty(static::$_instance)) {
+@@ -46,11 +47,6 @@ class Xhgui_ServiceContainer extends Pimple
+         $this['app'] = $this->share(function ($c) {
+             $app = new Slim($c['config']);
+ 
 -            // Enable cookie based sessions
 -            $app->add(new SessionCookie(array(
 -                'httponly' => true,
 -            )));
 -
-@@ -79,2 +75,12 @@ class Xhgui_ServiceContainer extends Pimple
+             // Add renderer.
+             $app->add(new Xhgui_Middleware_Render());
+ 
+@@ -76,8 +72,18 @@ class Xhgui_ServiceContainer extends Pimple
+             if (empty($config['db.options'])) {
+                 $config['db.options'] = array();
+             }
 -            $mongo = new MongoClient($config['db.host'], $config['db.options']);
 -            $mongo->{$config['db.db']}->results->findOne();
 +            $triesCount = self::TRIES_COUNT;
@@ -38,6 +276,119 @@ index a71f962..7beb1ff 100644
 +            }
 +
 +            $mongo->{$config['db.db']}->{$config['db.collection']}->findOne();
-@@ -94 +100 @@ class Xhgui_ServiceContainer extends Pimple
+ 
+             return $mongo->{$config['db.db']};
+         });
+@@ -91,7 +97,11 @@ class Xhgui_ServiceContainer extends Pimple
+         });
+ 
+         $this['searcher.mongo'] = function ($c) {
 -            return new Xhgui_Searcher_Mongo($c['db']);
-+            return new Xhgui_Searcher_Mongo($c['db'], $c['config']['db.collection']);
++            return new Xhgui_Searcher_Mongo(
++                $c['db'],
++                $c['config']['db.collection'],
++                $c['config']['db.dictionary']
++            );
+         };
+ 
+         $this['searcher.pdo'] = function ($c) {
+diff --git a/src/templates/custom/create.twig b/src/templates/custom/create.twig
+index 8d36081..638d282 100644
+--- a/src/templates/custom/create.twig
++++ b/src/templates/custom/create.twig
+@@ -20,7 +20,7 @@
+       <h2>Values to Retrieve</h2>
+       <p>Values that should be retrieved, and put in the table</p>
+       <form>
+-        <textarea id="retrieve">{"meta" : true, "profile.main()" : true}</textarea>
++        <textarea id="retrieve">{"meta" : true, "profile.0" : true}</textarea>
+       </form>
+     </div><!--/span-->
+ 
+@@ -28,7 +28,7 @@
+       <h2>Values to Graph</h2>
+       <p>These are things that should end up on the graph.</p>
+       <form>
+-        <textarea id="graph">{"meta" : true, "profile.main()" : true}</textarea>
++        <textarea id="graph">{"meta" : true, "profile.0" : true}</textarea>
+       </form>
+     </div><!--/span-->
+     
+diff --git a/src/templates/custom/help.twig b/src/templates/custom/help.twig
+index 08993bc..11d859a 100644
+--- a/src/templates/custom/help.twig
++++ b/src/templates/custom/help.twig
+@@ -16,7 +16,7 @@
+       </p>
+       <b>Display runs that took more than 1 second</b>
+       <p style="white-space: pre;">
+-        { "profile.main().wt" : {"$gt" : 1000000}}
++        { "profile.0.wt" : {"$gt" : 1000000}}
+       </p>
+       
+     </div><!--/span-->
+@@ -29,7 +29,7 @@
+       <h3>Samples</h3>
+       <b>Retrieve meta details, and overall run data</b>
+       <p style="white-space: pre;">
+-        {"meta" : true, "profile.main()" : true}
++        {"meta" : true, "profile.0" : true}
+       </p>
+     </div><!--/span-->
+ 
+diff --git a/src/templates/layout/base.twig b/src/templates/layout/base.twig
+index 87f53fc..7e96880 100644
+--- a/src/templates/layout/base.twig
++++ b/src/templates/layout/base.twig
+@@ -45,9 +45,8 @@
+         <hr>
+ 
+         <footer class="row-fluid footer-text">
+-            <span class="span4">© Paul Reinheimer &amp; Mark Story 2012</span>
+-            <span class="span4">1,000,000 µs = 1 second</span>
+-            <span class="span4">1,048,576 bytes = 1 MB</span>
++            <span class="span4">© Paul Reinheimer &amp; Mark Story</span>
++            <span class="span4">Collection: <strong>{{ collection }}</strong></span>
+         </footer>
+     </div>
+ 
+diff --git a/tests/Db/MapperTest.php b/tests/Db/MapperTest.php
+index 4e61a3e..3d0a841 100644
+--- a/tests/Db/MapperTest.php
++++ b/tests/Db/MapperTest.php
+@@ -146,7 +146,7 @@ class Db_MapperTest extends PHPUnit\Framework\TestCase
+         );
+         $result = $this->mapper->convert($options);
+         $this->assertEquals(
+-            array('profile.main().wt' => -1),
++            array('profile.0.wt' => -1),
+             $result['sort']
+         );
+ 
+@@ -156,7 +156,7 @@ class Db_MapperTest extends PHPUnit\Framework\TestCase
+         );
+         $result = $this->mapper->convert($options);
+         $this->assertEquals(
+-            array('profile.main().wt' => 1),
++            array('profile.0.wt' => 1),
+             $result['sort']
+         );
+         $this->assertEquals('asc', $result['direction']);
+@@ -167,7 +167,7 @@ class Db_MapperTest extends PHPUnit\Framework\TestCase
+         );
+         $result = $this->mapper->convert($options);
+         $this->assertEquals(
+-            array('profile.main().wt' => -1),
++            array('profile.0.wt' => -1),
+             $result['sort']
+         );
+         $this->assertEquals('desc', $result['direction']);
+@@ -178,7 +178,7 @@ class Db_MapperTest extends PHPUnit\Framework\TestCase
+         );
+         $result = $this->mapper->convert($options);
+         $this->assertEquals(
+-            array('profile.main().wt' => -1),
++            array('profile.0.wt' => -1),
+             $result['sort']
+         );
+         $this->assertEquals('desc', $result['direction']);

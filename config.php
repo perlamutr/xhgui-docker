@@ -5,6 +5,7 @@ session_start();
 $credentials = getUriOrEnvValue('MONGO_CRED', false);
 $hostPort = getUriOrEnvValue('MONGO_HOST_PORT', 'mongo:27017');
 $collection = getUriOrEnvValue('MONGO_COLLECTION', 'results');
+$dictColl = getUriOrEnvValue('MONGO_DICT_COLLECTION', 'dict');
 $options = getUriOrEnvValue('MONGO_OPTIONS', false);
 
 $mongoUri = sprintf(
@@ -19,6 +20,7 @@ return [
     'db.host'           => $mongoUri,
     'db.db'             => 'xhprof',
     'db.collection'     => $collection,
+    'db.dictionary'     => $dictColl,
     'db.options'        => [],
     'templates.path'    => dirname(__DIR__) . '/src/templates',
     'date.format'       => 'M jS H:i:s',
