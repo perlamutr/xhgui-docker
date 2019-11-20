@@ -1,5 +1,6 @@
 <?php
 
+ini_set('memory_limit', '2G');
 session_start();
 
 $credentials = getUriOrEnvValue('MONGO_CRED', false);
