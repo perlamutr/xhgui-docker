@@ -10,10 +10,10 @@ $dictColl = getUriOrEnvValue('MONGO_DICT_COLLECTION', 'dict');
 $options = getUriOrEnvValue('MONGO_OPTIONS', false);
 
 $mongoUri = sprintf(
-    'mongodb://%s%s?%s',
+    'mongodb://%s%s%s',
     $credentials ? $credentials . '@' : '',
     $hostPort,
-    $options
+    $options ? '?' . $options : ''
 );
 
 return [
